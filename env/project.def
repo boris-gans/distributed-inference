@@ -1,0 +1,1 @@
+# Apptainer definition scaffold for PyTorch, DeepSpeed Inference, and NCCL on Magic Castle HPC nodes.
