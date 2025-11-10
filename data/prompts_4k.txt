@@ -1,0 +1,39 @@
+1. Quantum entanglement has often been described as one of the most mysterious phenomena in modern physics. Provide a detailed explanation, beginning with the basic concept of classical correlations between particles, and then contrast this with quantum entanglement. Include an explanation of Bell’s theorem, local realism, and the experimental evidence that demonstrates the nonlocal nature of entangled systems. Discuss why this fundamentally challenges the assumptions of classical physics and what implications it has for quantum communication and computing.
+
+2. In modern machine learning infrastructure, scaling inference across many GPUs and nodes poses several nontrivial challenges. Write a comprehensive explanation of the primary factors that determine the scalability of distributed inference for large language models like Llama 70B. Cover network bandwidth, latency, tensor and pipeline parallelism, parameter sharding, communication overhead, and load balancing. Include how these affect both throughput and model accuracy, and suggest optimization strategies.
+
+3. Write a complete Python function that performs matrix multiplication across multiple GPUs using PyTorch. Explain how device placement, synchronization, and gradient flow are handled. Include comments describing each step, and discuss how this approach can be generalized to model-parallel training or inference environments.
+
+4. Present a deep comparison between the epistemological frameworks of Immanuel Kant and David Hume. Begin by summarizing their historical contexts and intellectual influences, then contrast their views on causation, empiricism, and the role of reason. Highlight how Kant’s “Critique of Pure Reason” sought to reconcile rationalism and empiricism, and explain how Hume’s skepticism shaped Kant’s response.
+
+5. Describe in detail how global ocean currents distribute thermal energy and influence regional climates. Include explanations of the thermohaline circulation, the Gulf Stream, and El Niño–Southern Oscillation. Discuss how these systems interact with atmospheric circulation and how climate change may disrupt them.
+
+6. Offer a thorough critique of transformer architectures compared to recurrent neural networks (RNNs). Explain the trade-offs in computational efficiency, memory usage, and sequence modeling. Provide examples from NLP benchmarks showing where transformers excel and where RNNs might still be advantageous.
+
+7. Discuss the ethical and societal implications of deploying AI models in decision-making processes that affect people’s lives. Include topics such as bias, accountability, transparency, and the balance between automation and human judgment. Provide at least one real-world case study.
+
+8. Write a detailed and imaginative short story about a researcher who accidentally establishes communication with an extraterrestrial artificial intelligence. Explore the emotional, ethical, and scientific consequences of the discovery, and use vivid descriptions to show how the communication evolves.
+
+9. Derive the classical formula for kinetic energy step by step, starting from Newton’s second law of motion. Explain each assumption clearly, relate it to the concept of work, and describe the physical meaning of energy transfer in dynamic systems.
+
+10. Analyze in depth the potential economic consequences of a global transition toward renewable energy sources, focusing on emerging economies. Discuss policy implications, investment challenges, workforce transformation, and long-term sustainability.
+
+11. Describe various caching strategies that can be used to reduce latency in large-scale inference pipelines. Discuss trade-offs between memory footprint, hit ratio, and coherence. Include examples from production systems using GPUs.
+
+12. Translate the following English paragraph into French, maintaining tone, rhythm, and semantic precision. Also, explain the key translation challenges such as idioms or tense shifts that arise in the process.
+
+13. Explain in detail how batch normalization stabilizes neural network training. Discuss its mathematical formulation, how it affects the loss landscape, and why it allows higher learning rates. Compare it with alternatives like layer normalization.
+
+14. Describe protein folding as a fundamental biochemical process. Explain the forces driving folding, how misfolding leads to diseases, and why this knowledge is essential in modern drug discovery. Provide at least one example where AI was applied to predict protein structures.
+
+15. Write pseudocode for a load balancer that intelligently distributes API requests across multiple inference servers, accounting for latency, GPU utilization, and failure recovery. Explain each design decision.
+
+16. Provide a deep technical explanation of IPv4 and IPv6, including their addressing schemes, header structures, and transition mechanisms. Discuss the operational challenges faced by ISPs and enterprises when migrating networks.
+
+17. Explain memory consistency in distributed computing systems in a teaching-oriented way. Cover sequential consistency, relaxed models, and coherence protocols. Provide examples of how inconsistencies can lead to bugs in multi-threaded or multi-GPU code.
+
+18. Create a detailed roadmap for fine-tuning a 70-billion-parameter model on a new dataset or domain. Include data preprocessing, hardware planning, parameter-efficient techniques (LoRA, QLoRA), checkpoint management, and validation strategies.
+
+19. Write an extended persuasive essay arguing for or against universal basic income. Use historical context, empirical evidence, and ethical reasoning to support your position. Consider counterarguments and address potential economic side effects.
+
+20. Explain the nature of black holes and their event horizons in a detailed, step-by-step exposition. Include a brief overview of general relativity, the concept of spacetime curvature, and how Hawking radiation relates to the black hole information paradox.

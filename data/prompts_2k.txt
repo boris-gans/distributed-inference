@@ -1,0 +1,20 @@
+1. Explain how quantum entanglement differs from classical correlation and why it violates local realism.
+2. Summarize the key factors that determine scalability in distributed inference for large language models.
+3. Write a Python function that parallelizes matrix multiplication across multiple GPUs using PyTorch.
+4. Compare the philosophical views of Kant and Hume on the nature of human knowledge.
+5. Describe how ocean currents affect global climate patterns.
+6. Provide a detailed critique of the efficiency of transformer architectures compared to RNNs.
+7. Explain the ethical considerations of deploying AI models in decision-making systems.
+8. Generate a creative short story about a researcher who discovers communication with an alien AI.
+9. Derive the formula for kinetic energy from Newton’s laws and explain its physical meaning.
+10. Analyze the economic impact of renewable energy adoption on emerging markets.
+11. Discuss how caching strategies can reduce latency in large-scale inference pipelines.
+12. Translate the following English paragraph into fluent French while preserving tone and nuance.
+13. Explain why batch normalization improves training stability in deep neural networks.
+14. Describe the process of protein folding and its significance in drug design.
+15. Write pseudocode for a load balancer that distributes API requests across inference servers.
+16. Compare IPv4 and IPv6 addressing schemes and discuss transition strategies.
+17. Explain the concept of memory consistency in distributed computing.
+18. Provide a step-by-step plan for fine-tuning a 70B parameter model on a new domain.
+19. Write a persuasive paragraph arguing for or against universal basic income.
+20. Explain how a black hole’s event horizon relates to information loss.

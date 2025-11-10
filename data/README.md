@@ -1,17 +1,5 @@
-<!-- Data management notes covering storage, preprocessing, and retention for DeepSeek evaluations. -->
-
-We want to measure the quality of outputs as well, meaning we measure:
-
-1. Deterministic equivalence (primary): With identical decoding settings (greedy or temperature=0), the distributed setup should match a baseline DeepSeek v3.1 run.
-
-2. Task realism (secondary): On a tiny curated set (10–50 prompts), outputs should be comparable to a baseline judged by simple automatic metrics or pairwise preference.
-
-
-In our case, quality can change due to two main reasons. We want to detect this to ensure our model behaves properly:
-
-1. Precision (FP16 vs BF16), kernel choices, tensor/pipeline parallel collectives, and quantization can slightly perturb logits → different tokens with sampling.
-
-2. Different tokenizers, max lengths, or server-side system prompts also cause drift.
+## Prompts
+We have 2 files with 20 prompts each, one file for prompts of about 2k tokens and the other for prompts of 4k tokens. Each prompt (between files) asks for the exact same operation, but the 4k versions are just slighly more verbose. This way we can explore model performance with larger attention heads
 
 
 ## Deterministic Correctness Checks
