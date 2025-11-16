@@ -148,6 +148,9 @@ python -m src.orchestrator --input data/sample_inputs.txt --local_debug --num_wo
 
 ## Resources
 - **Hosting Updated:** https://fireworks.ai/
+  - https://app.fireworks.ai/models/fireworks/gpt-oss-20b
+  - https://app.fireworks.ai/models/fireworks/gpt-oss-120b
+
 - **Model Choices:**
   - https://huggingface.co/openai/gpt-oss-20b
   - https://huggingface.co/openai/gpt-oss-120b
