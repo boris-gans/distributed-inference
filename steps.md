@@ -178,3 +178,306 @@ Wraps Slurm operations:
 - **to_markdown**: Produce publication-ready Markdown tables.  
 - **to_csv**: Export metrics to CSV.  
 - **build_plots**: Create plots such as latency vs. accuracy.
+
+
+# Cluster Runtime Build Steps (in-depth)
+
+
+## 5. Execution Steps
+
+### 1. **Prepare prompts locally** using `PromptFileSet`. Persist canonical IDs to keep rows aligned between 2k and 4k variants.
+
+### 2. **Build the prompt DataFrame** (`PromptDataFrameBuilder`). Store to disk before inference so downstream scripts can reload the same ordering.
+
+### 3. **Run baseline OpenAI inference** with `LocalInferenceRunner`; update `local_completion` + metrics columns.
+
+---
+
+### 4. **Launch distributed strategies sequentially** via `DistributedExperimentPipeline`
+
+For each configured strategy (e.g. different PP/TP setups, batch sizes, etc.):
+
+#### 4.1. Materialize a **strategy config object**
+
+From your `ParallelismStrategy` subclass, construct a **pure data object**:
+
+* `strategy_id` (e.g. `"llama8b_pp2_tp1"`)
+* model info:
+
+  * `model_name`, `model_path` (cluster path to LLaMA 8B weights)
+* parallelism:
+
+  * `num_nodes`
+  * `gpus_per_node`
+  * `pp_size`
+  * `tp_size`
+  * optional `dp_size`
+* runtime:
+
+  * `batch_size`
+  * `max_new_tokens`
+  * `precision` (fp16/bf16)
+  * `profiling_enabled` flags (Nsight/perf)
+* paths:
+
+  * `prompt_df_path` (the parquet from Step 2, on shared storage)
+  * `output_root` (e.g. `/scratch/$USER/experiments/run_<ts>/<strategy_id>/`)
+  * `logs_dir`, `profiling_dir` (subdirs under `output_root`)
+* bookkeeping:
+
+  * `run_id`
+  * `slurm_time_limit`, `partition`, `account` if needed
+
+This is still in Python memory at this point.
+
+#### 4.2. Emit a **strategy experiment config JSON** (for the container entry script)
+
+Write a JSON file, e.g.:
+
+`/scratch/$USER/experiments/run_<ts>/<strategy_id>/exp_config.json`
+
+Containing:
+
+* all the fields above, plus:
+
+  * `appainter_image` (name or path of the container)
+  * `deepspeed_config_path` (if you use a separate DeepSpeed JSON)
+  * `world_size` (pp × tp × dp)
+  * `output_shard_pattern` (e.g. `"shard_{rank}.jsonl"`)
+  * `metrics_file` (e.g. `"metrics_rank_{rank}.json"`)
+
+This is what `run_distributed_inference.py` will read inside the container.
+
+#### 4.3. Use `SlurmJobFactory` to generate a **concrete Slurm script**
+
+For this strategy, write a file like:
+
+`/scratch/$USER/experiments/run_<ts>/<strategy_id>/job.slurm`
+
+The factory fills in:
+
+* `#SBATCH` header:
+
+  * `--job-name=llama8b_${strategy_id}`
+  * `--nodes=<num_nodes>`
+  * `--gres=gpu:<gpus_per_node>`
+  * `--ntasks-per-node=<gpus_per_node>` (or 1 if DeepSpeed handles spawning)
+  * `--time=<slurm_time_limit>`
+  * partition/account/etc.
+* environment setup:
+
+  * any `module load` you still need
+  * NCCL env (if not handled elsewhere): `NCCL_DEBUG`, etc.
+* Appainter + DeepSpeed launch:
+
+```bash
+appainter pull ${APPAINTER_IMAGE}   # optional if pulling from registry
+
+appainter run \
+    --mount /scratch/$USER/experiments:/exp \
+    --mount /scratch/$USER/models:/models \
+    ${APPAINTER_IMAGE} \
+    deepspeed \
+      --num_nodes=${NUM_NODES} \
+      --num_gpus=${GPUS_PER_NODE} \
+      /app/run_distributed_inference.py \
+      --config /exp/run_${RUN_ID}/${STRATEGY_ID}/exp_config.json
+```
+
+You now have a **fully self-contained job** for this strategy: config + Slurm script + known output directory.
+
+#### 4.4. Submit and track the job with `SlurmJobManager`
+
+For each strategy:
+
+1. Call `sbatch job.slurm`, capture the returned `job_id`.
+
+2. Persist a small manifest locally and/or on cluster, e.g.:
+
+   `run_<ts>/manifest.json` entry:
+
+   ```json
+   {
+     "strategy_id": "llama8b_pp2_tp1",
+     "job_id": 123456,
+     "exp_config_path": "/scratch/.../exp_config.json",
+     "output_root": "/scratch/.../outputs",
+     "status": "SUBMITTED"
+   }
+   ```
+
+3. Poll Slurm:
+
+   * `squeue -j <job_id>` while PENDING/RUNNING
+   * `sacct -j <job_id> --format=State,Elapsed,MaxRSS,...` after completion
+
+4. Update manifest with:
+
+   * final `status` (COMPLETED/FAILED/TIMEOUT)
+   * basic Slurm resource metrics from `sacct` (walltime, memory, etc.)
+   * path to `slurm-<job_id>.out`
+
+The **pipeline logic** at this level should:
+
+* run strategies **sequentially** (as you said)
+* do not move to `ResultCollector` for a given strategy until `status == COMPLETED`
+
+---
+
+### 4.5. What happens on the cluster inside the container (for each job)
+
+`run_distributed_inference.py` (inside the container) should:
+
+1. Parse `--config` and load `exp_config.json`.
+
+2. Initialize distributed:
+
+   * `deepspeed.init_distributed()` or equivalent
+   * interpret `RANK`, `WORLD_SIZE`, etc. from Slurm/DeepSpeed
+
+3. Construct pipeline & tensor parallel groups:
+
+   * assign `pp_rank`, `tp_rank`, `data_rank` based on `rank`
+
+4. Load the appropriate **model partition** for this rank:
+
+   * pointer to `/models/llama8b/...`
+   * either:
+
+     * DeepSpeed handles partitioning, or
+     * your code loads only the layers assigned to `pp_rank`
+
+5. Load the prompt dataframe from shared storage:
+
+   * `/exp/run_<ts>/prompts.parquet`
+   * possibly shard across data ranks, but always preserve `prompt_id`
+
+6. Run inference in batches:
+
+   * for each batch:
+
+     * forward through PP+TP
+     * measure per-batch latency, tokens/sec
+
+7. Each rank writes **its own shard output** to:
+
+   `/exp/run_<ts>/<strategy_id>/outputs/shard_<rank>.jsonl`
+
+   With rows like:
+
+   ```jsonl
+   {"prompt_id": 123, "strategy_id": "llama8b_pp2_tp1", "completion": "...", "latency_ms": 42.7, "tokens_generated": 128}
+   ```
+
+8. Each rank writes a **rank-level metrics file**:
+
+   `/exp/run_<ts>/<strategy_id>/metrics/metrics_rank_<rank>.json`
+   (e.g. average latency, throughput, etc.)
+
+9. If profiling enabled:
+
+   * wrap main loop in Nsight/perf
+   * write profiler outputs to:
+
+     * `/exp/run_<ts>/<strategy_id>/profiling/`
+
+10. Exit cleanly; let Slurm produce `slurm-<job_id>.out`.
+
+At this point, all artifacts needed by `ResultCollector` exist on the shared filesystem.
+
+---
+
+### 5. **Ingest job outputs** with `ResultCollector`, append to the shared DataFrame, and checkpoint
+
+For each strategy with `status == COMPLETED`:
+
+#### 5.1. Locate and validate shard outputs
+
+* Look under:
+
+  * `output_root = /scratch/.../run_<ts>/<strategy_id>/outputs/`
+* Expect exactly `WORLD_SIZE` shard files:
+
+  * `shard_0.jsonl`, `shard_1.jsonl`, …
+* If missing / incomplete, mark strategy as failed or partial.
+
+#### 5.2. Load and concatenate shard data
+
+* Read all `shard_*.jsonl` into a temporary DataFrame:
+
+  * columns: `prompt_id`, `completion`, `latency_ms`, `tokens_generated`, etc.
+* Add a `strategy_id` column.
+
+#### 5.3. Join with the master prompt DataFrame
+
+* Reload the canonical prompt parquet saved in Step 2 (local or from cluster).
+
+* Left-join on `prompt_id`:
+
+  * existing columns:
+
+    * `prompt_text_2k`, `prompt_text_4k`, `local_completion`, baseline metrics…
+  * new strategy-specific columns (either wide or long form):
+
+    * wide: `llama8b_pp2_tp1_completion`, `llama8b_pp2_tp1_latency_ms`, etc.
+    * long: extra column `engine` and one `completion` column.
+
+* Update in-memory master DataFrame for this run.
+
+#### 5.4. Attach cluster metrics
+
+* Optionally parse:
+
+  * per-rank metrics JSONs
+  * sacct metrics for this `job_id`
+* Aggregate them (e.g. mean latency per prompt, total tokens/sec, GPU utilization summary).
+* Store into a separate “cluster_metrics” table keyed by `strategy_id`, or add strategy-level columns to a summary DataFrame.
+
+#### 5.5. Checkpoint results to disk
+
+* After each strategy ingestion, write:
+
+  * `results/run_<timestamp>.parquet` (full per-prompt DF with all strategies)
+  * optionally:
+
+    * `results/cluster_metrics_run_<timestamp>.parquet`
+    * a JSON manifest summarizing which strategies completed and where their logs are.
+
+This gives you **safe intermediate checkpoints** even if later strategies fail.
+
+---
+
+### 6. **Compute correctness metrics** and export a comparative summary
+
+Once all target strategies have run and been ingested:
+
+#### 6.1. Compute per-strategy correctness vs. baseline labels
+
+* Using the combined DataFrame from Step 5:
+
+  * Compare each strategy’s completion to:
+
+    * ground-truth label (if you have one), or
+    * baseline OpenAI completion (`local_completion`)
+* Compute metrics per strategy:
+
+  * accuracy / exact match
+  * distance metrics (e.g. string similarity, BLEU, etc.)
+* Store in a **summary DataFrame** with one row per `strategy_id`.
+
+#### 6.2. Compute performance metrics per strategy
+
+From ingested metrics & sacct data:
+
+* Effective throughput (tokens/sec, prompts/sec)
+* Median/percentile latencies
+* Resource usage (wallclock, GPU-hours, memory from sacct)
+
+Add these columns to the same summary DataFrame.
+
+#### 6.3. Export human-readable summaries
+
+* Write:
+
+  * `results/summary_run_<timestamp>.csv`
+  * `results/summary_run_<timestamp>.md` (nicely formatted comparison of strategies: accuracy vs latency vs throughput vs cost)

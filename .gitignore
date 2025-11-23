@@ -4,12 +4,13 @@
 *.pdf
 *.jsonl
 *.pyc
+*.parquet
 
 /results/logs/*
 /results/plots/*
 /results/profiling/*
 
-*/__pycache__
+/__pycache__
 
 notes.md
 # trash*

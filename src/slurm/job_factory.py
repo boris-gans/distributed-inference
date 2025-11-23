@@ -8,6 +8,7 @@ from typing import Dict, Optional
 
 from ..parallelism.strategy import ParallelismStrategy
 
+# this should create a json file for configs, and .slurm scripts for runtime (or just pass the path of the already made scripts)
 
 @dataclass
 class SlurmConfig:

@@ -7,6 +7,8 @@ from typing import Callable, Dict
 
 from .job_factory import SlurmConfig
 
+# creates appainter image, sends it to cluster to run, 
+#   collects results/artifcats once job has finished. 
 
 class SlurmJobManager:
     """Handles sbatch submission, monitoring, and artifact callbacks."""

@@ -5,11 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable, List
 
-try:
-    import pandas as pd
-except ImportError:  # pragma: no cover
-    pd = None  # type: ignore[assignment]
-
+import pandas as pd
 
 class ResultCollector:
     """Collects outputs written by Slurm jobs and normalizes them."""

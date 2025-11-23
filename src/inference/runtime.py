@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Iterable, List, Sequence
 from dotenv import load_dotenv
@@ -174,17 +176,41 @@ def run_local_debug(
 
 
 def run_distributed_stub(args: argparse.Namespace) -> None:
-    """Placeholder for the cluster execution path."""
-    raise NotImplementedError(
-        "Distributed DeepSpeed inference path not yet implemented. "
-        "Integrate cluster initialization, tensor parallel groups, and NCCL setup here."
+    """Submit the single pipeline-parallel job via the Slurm helper script."""
+    launcher = Path(__file__).resolve().parents[2] / "slurm" / "launch_pipeline.sh"
+    if not launcher.exists():
+        raise SystemExit(
+            f"Slurm launcher script not found at {launcher}. "
+            "Run with --local_debug or create the launcher script."
+        )
+
+    if shutil.which("sbatch") is None:
+        raise SystemExit(
+            "Slurm (sbatch) is not available on this machine. "
+            "Run with --local_debug locally, or execute launch_pipeline.sh on your cluster login node."
+        )
+
+    env = os.environ.copy()
+    env.setdefault(
+        "PIPELINE_ROOT",
+        str(Path(__file__).resolve().parents[2] / "experiments" / "pipeline_run"),
     )
+
+    try:
+        subprocess.run(
+            ["bash", str(launcher)],
+            check=True,
+            env=env,
+        )
+    except subprocess.CalledProcessError as exc:
+        raise SystemExit(f"sbatch submission failed with exit code {exc.returncode}") from exc
 
 
 def main(argv: Sequence[str] | None = None) -> None:
     """CLI entry point for both local debug and forthcoming cluster modes."""
     args = parse_args(argv)
     logger = utils.setup_logging(level=args.log_level.upper())
+
     tracker = utils.MetricsTracker()
 
     # Clean args
@@ -200,6 +226,7 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     df = None
     df_acc = None
+    prompts: List[str] = []
 
     if not args.override:
         print(Path(os.getenv("SAVE_PATH_ACC")).exists())
@@ -218,9 +245,10 @@ def main(argv: Sequence[str] | None = None) -> None:
         # Skip building the base df if either DataFrames already exist
         prompt_file_set = PromptFileSet(path_2k=os.getenv("PATH_2K"), path_4k=os.getenv("PATH_4K"), variant=args.variant, limit=args.limit)
         prompt_repository = PromptRepository(file_set=prompt_file_set)
-        prompts = prompt_repository.load_all()
+        prompt_records = prompt_repository.load_all()
+        prompts = [record.prompt for record in prompt_records]
 
-        df_builder = PromptDataFrameBuilder(prompts=prompts)
+        df_builder = PromptDataFrameBuilder(prompts=prompt_records)
         df = df_builder.build()
 
         df_builder.persist(path=os.getenv("SAVE_PATH_BASE"))
@@ -250,18 +278,22 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     
 
-    return
-
-    # TODO: implement node_runtime and slurm config factory
-    # TODO: implement debug inference mode (local)
-    # TODO: implement acc metrics
-
+    # return
 
     logger.info(
         "Starting inference (%s mode) with batch_size=%d",
         "local-debug" if args.local_debug else "cluster",
         args.batch_size,
     )
+
+    if not prompts and df_acc is not None:
+        prompts = df_acc["prompt"].tolist()
+    if not prompts and df is not None:
+        prompts = df["prompt"].tolist()
+
+    if not prompts:
+        logger.error("No prompts are available to run.")
+        raise SystemExit(1)
 
     if args.local_debug:
         try:
@@ -285,4 +317,3 @@ def main(argv: Sequence[str] | None = None) -> None:
     else:
         for record in results:
             logger.info("Result: %s", json.dumps(record))
-

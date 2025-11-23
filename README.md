@@ -151,8 +151,10 @@ python -m src.orchestrator --input data/sample_inputs.txt --local_debug --num_wo
   - https://app.fireworks.ai/models/fireworks/gpt-oss-20b
   - https://app.fireworks.ai/models/fireworks/gpt-oss-120b
   - https://fireworks.ai/models/fireworks/llama-v2-13b-chat
+  - or grok
 
 - **Model Choices:**
   - https://huggingface.co/openai/gpt-oss-20b
   - https://huggingface.co/openai/gpt-oss-120b
   - https://huggingface.co/meta-llama/Llama-2-13b-chat
+  - or llama 3.1 7B, qwen 3 8B

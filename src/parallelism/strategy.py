@@ -8,6 +8,9 @@ from typing import Dict
 from ..data.prompts import PromptRepository
 
 
+# TODO: load a yaml file describing cluster topology. store this within ParallelsimStratedgy, amking it available to child strats
+    # child strats then dynamically update their configs based on this, with a nromalized output to use for job factory
+
 class ParallelismStrategy(ABC):
     """Base class for any TP/PP configuration we want to evaluate."""
 
@@ -41,13 +44,13 @@ class ParallelismStrategy(ABC):
         """Apply any strategy-specific cleanup to the aggregated DataFrame."""
 
 
-class HybridTensorPipeline(ParallelismStrategy):
+class PipelineParallelism(ParallelismStrategy):
     """Hybrid tensor-parallel within nodes plus pipeline across nodes."""
 
     @property
     def strategy_name(self) -> str:
         """Return the canonical identifier for the hybrid configuration."""
-        return "hybrid_tensor_pipeline"
+        return "pipeline"
 
     def describe_topology(self) -> str:
         """Describe the hybrid TP+PP layout used for this strategy."""
