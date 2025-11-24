@@ -1,0 +1,63 @@
+Bootstrap: docker
+From: nvidia/cuda:12.2.0-devel-ubuntu22.04
+
+%labels
+    Maintainer You
+    Version 1.0
+    Description "Minimal DeepSpeed + PyTorch + HF + Nsight Systems container for multi-node inference"
+
+%environment
+    # Ensure CUDA & NCCL show up correctly
+    export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+    export PATH=/opt/nsight-systems/bin:$PATH
+
+    # Avoid HF cache warnings
+    export HF_HOME=/workspace/.cache/huggingface
+
+    # Ensure Python finds /app
+    export PYTHONPATH=/app:$PYTHONPATH
+
+%post
+    apt-get update && apt-get install -y --no-install-recommends \
+        python3 \
+        python3-pip \
+        python3-dev \
+        git \
+        curl \
+        wget \
+        ca-certificates \
+        libaio1 \
+        libopenmpi-dev \
+        openssh-client \
+        unzip \
+        build-essential
+
+    # Optional but recommended: for NCCL tests and cluster friendliness
+    apt-get install -y --no-install-recommends \
+        libibverbs1 ibverbs-providers rdma-core
+
+    # Install PyTorch 2.x with CUDA 12.x
+    pip install --upgrade pip wheel setuptools
+
+    pip install torch==2.3.1+cu121 torchvision==0.18.1+cu121 torchaudio==2.3.1 \
+    --index-url https://download.pytorch.org/whl/cu121
+
+    # Install Transformers, Tokenizers, HF Hub
+    pip install transformers tokenizers accelerate huggingface_hub sentencepiece
+
+    # DeepSpeed (inference kernels included)
+    DS_BUILD_OPS=1 pip install deepspeed
+
+    # Install Nsight Systems CLI inside container
+    wget https://developer.nvidia.com/downloads/assets/tools/nsight-systems/2024.1.1/nsight-systems-2024.1.1.59-linux-installer.run -O /tmp/nsys.run
+    chmod +x /tmp/nsys.run
+    /tmp/nsys.run --quiet --accept-eula --prefix=/opt/nsight-systems
+
+    # Create app directory for your code
+    mkdir -p /app
+
+%files
+    run_distributed_inference.py /app/run_distributed_inference.py
+
+%runscript
+    exec python3 /app/run_distributed_inference.py "$@"
