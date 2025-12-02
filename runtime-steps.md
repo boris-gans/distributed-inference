@@ -44,6 +44,7 @@ sbatch /home/user49/projects/def-sponsor00/user49/distributed-inference/slurm/su
 
 *projects pwd*
 /home/user49/projects/def-sponsor00/user49
+/home/user49/projects/def-sponsor00/shared
 
 *home pwd*
 /home/user49/

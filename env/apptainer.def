@@ -10,6 +10,9 @@ From: nvidia/cuda:12.2.0-devel-ubuntu22.04
     Description "Minimal DeepSpeed + PyTorch + HF + Nsight Systems container for multi-node inference"
 
 %environment
+    export PYTHONPATH=/ext/pytorch/lib/python3.10/site-packages:$PYTHONPATH
+    export PATH=/ext/gromacs/bin:$PATH
+
     # Ensure CUDA & NCCL show up correctly
     export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
     export PATH=/opt/nsight-systems/bin:$PATH
@@ -41,9 +44,6 @@ From: nvidia/cuda:12.2.0-devel-ubuntu22.04
 
     # Install PyTorch 2.x with CUDA 12.x
     pip install --upgrade pip wheel setuptools
-
-    pip install torch==2.3.1+cu121 torchvision==0.18.1+cu121 torchaudio==2.3.1 \
-    --index-url https://download.pytorch.org/whl/cu121
 
     # Install Transformers, Tokenizers, HF Hub
     pip install transformers tokenizers accelerate huggingface_hub sentencepiece
