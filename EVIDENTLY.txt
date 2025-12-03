@@ -1,0 +1,3 @@
+lets use evidently for getting the accaurcy of the output
+
+https://docs.evidentlyai.com/quickstart_llm

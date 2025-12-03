@@ -8,6 +8,12 @@ sacct -j <jobid> --format=JobID,State,Elapsed,MaxRSS,AllocCPUS,AllocGRES
 watch -n 1 squeue -u $USER
 
 
+
+
+tail -f /home/user49/scratch/group1/hpc-runs/llama_pipeline-4231.out | ts
+
+scancel 
+
 ```
 
 

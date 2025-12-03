@@ -27,7 +27,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
-import deepspeed
 import torch
 import torch.distributed as dist
 from torch import nn
@@ -87,7 +86,8 @@ def init_logging(output_dir: Path, rank: int) -> logging.Logger:
 
 
 def init_distributed() -> int:
-    deepspeed.init_distributed()
+    backend = "nccl" if torch.cuda.is_available() else "gloo"
+    dist.init_process_group(backend=backend, init_method="env://")
     if not dist.is_initialized():
         raise SystemExit("torch.distributed was not initialized.")
     return dist.get_rank()

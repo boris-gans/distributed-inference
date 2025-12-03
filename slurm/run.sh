@@ -7,9 +7,6 @@
 
 set -euo pipefail
 
-# Ensure Python can import files from the bind-mounted repo at /app
-export PYTHONPATH="/app:${PYTHONPATH:-}"
-
 ############################
 # Basic configuration
 ############################
@@ -53,6 +50,123 @@ export NCCL_P2P_DISABLE=0
 
 # Reasonable default for CPU threads
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-4}"
+
+############################
+# Python deps (DeepSpeed/Transformers)
+############################
+
+# Force a usable CA bundle inside the container (cluster defaults may point to host-only paths).
+CERT_FILE="$(python - <<'PY'
+import sys
+try:
+    import certifi
+    print(certifi.where())
+except Exception:
+    print("")
+PY
+)"
+if [[ -z "${CERT_FILE}" || ! -f "${CERT_FILE}" ]]; then
+  if [[ -f "/etc/ssl/certs/ca-certificates.crt" ]]; then
+    CERT_FILE="/etc/ssl/certs/ca-certificates.crt"
+  else
+    echo "[rank ${RANK}] WARNING: No CA bundle found; pip may fail. Checked: ${CERT_FILE:-<none>} and /etc/ssl/certs/ca-certificates.crt" >&2
+  fi
+fi
+if [[ -n "${CERT_FILE:-}" && -f "${CERT_FILE}" ]]; then
+  export SSL_CERT_FILE="${CERT_FILE}"
+  export REQUESTS_CA_BUNDLE="${CERT_FILE}"
+  export PIP_CERT="${CERT_FILE}"
+  echo "[rank ${RANK}] Using CA bundle at ${CERT_FILE}"
+fi
+
+PYTHON_VERSION="$(python - <<'PY'
+import sys
+print(f"{sys.version_info.major}.{sys.version_info.minor}")
+PY
+)"
+PYTHON_SITE="${EXPERIMENT_ROOT}/.venv/lib/python${PYTHON_VERSION}/site-packages"
+PYTHON_BIN="${EXPERIMENT_ROOT}/.venv/bin"
+export PYTHONPATH="${PYTHON_SITE}:/app:${PYTHONPATH:-}"
+export PIP_CACHE_DIR="${EXPERIMENT_ROOT}/.pip-cache"
+export PIP_DISABLE_PIP_VERSION_CHECK=1
+export PATH="${PYTHON_BIN}:${PYTHON_SITE}/bin:${PATH}"
+# Avoid Triton autotune cache on slow home/NFS
+export TRITON_CACHE_DIR="${EXPERIMENT_ROOT}/.triton-cache"
+
+# Drop any previously pip-installed torch/CUDA wheels so we use the container's PyTorch/CUDA.
+if [[ -d "${PYTHON_SITE}/torch" || -d "${PYTHON_SITE}/torch-2."* ]]; then
+  echo "[rank ${RANK}] Removing pip-installed torch/CUDA wheels from ${PYTHON_SITE} to use container PyTorch..."
+  rm -rf "${PYTHON_SITE}/torch" \
+         "${PYTHON_SITE}"/torch-*.dist-info \
+         "${PYTHON_SITE}"/nvidia* \
+         "${PYTHON_SITE}"/triton*
+fi
+
+check_python_deps() {
+  PYTHONPATH="${PYTHONPATH}" python - <<'PY'
+import importlib.util, sys
+missing = [m for m in ("deepspeed", "transformers", "tokenizers") if importlib.util.find_spec(m) is None]
+sys.exit(1 if missing else 0)
+PY
+}
+
+if ! check_python_deps; then
+  echo "[rank ${RANK}] Installing Python deps into ${PYTHON_SITE}..."
+  mkdir -p "${PYTHON_SITE}" "${PIP_CACHE_DIR}"
+  (
+    flock 200
+    if ! check_python_deps; then
+      DS_BUILD_OPS=0 DS_SKIP_CUDA_CHECK=1 DS_SKIP_TORCH_CHECK=1 \
+      python -m pip install --no-cache-dir --upgrade \
+        --no-deps \
+        --target "${PYTHON_SITE}" \
+        "deepspeed==0.14.4" \
+        "transformers==4.43.3" \
+        "tokenizers==0.19.1" \
+        "sentencepiece==0.2.0" \
+        "accelerate==0.30.1" \
+        "huggingface-hub==0.23.4" \
+        "hjson==3.1.0" \
+        "tqdm>=4.66" \
+        "psutil>=5.9" \
+        "pyyaml" \
+        "packaging" \
+        "ninja>=1.11" \
+        "requests>=2.31" \
+        "filelock>=3.12" \
+        "regex>=2024.4" \
+        "safetensors>=0.4.1" \
+        "fsspec>=2023.5.0" \
+        "pydantic==2.12.5" \
+        "typing-inspection>=0.4.2" \
+        "py-cpuinfo>=9.0.0" \
+        "typing_extensions>=4.9" \
+        "certifi>=2024.2.0" \
+        "charset-normalizer>=3.3.0" \
+        "idna>=3.6" \
+        "urllib3>=2.1.0" \
+        "numpy>=1.23"
+    fi
+  ) 200>"${EXPERIMENT_ROOT}/.pip-install.lock"
+fi
+
+# Ensure ninja is discoverable for torch cpp_extensions
+if ! command -v ninja >/dev/null 2>&1; then
+  if [[ -x "${PYTHON_SITE}/bin/ninja" ]]; then
+    export PATH="${PYTHON_SITE}/bin:${PATH}"
+  elif [[ -x "${PYTHON_BIN}/ninja" ]]; then
+    export PATH="${PYTHON_BIN}:${PATH}"
+  else
+    echo "[rank ${RANK}] Installing ninja to ${PYTHON_SITE} for torch cpp_extensions..."
+    python -m pip install --no-cache-dir --upgrade --target "${PYTHON_SITE}" "ninja>=1.11"
+    export PATH="${PYTHON_SITE}/bin:${PATH}"
+  fi
+fi
+
+if ! check_python_deps; then
+  echo "[rank ${RANK}] Failed to provision Python deps; aborting." >&2
+  exit 1
+fi
 
 ############################
 # Base command: PyTorch + DeepSpeed Inference entrypoint

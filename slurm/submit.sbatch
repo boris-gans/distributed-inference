@@ -30,14 +30,20 @@ EXPERIMENT_ROOT="${EXPERIMENT_ROOT:-/tmp/workspace}"
 
 # Apptainer image: prefer the shared PyTorch SIF provided on the cluster.
 # Override via APPAINTER_IMAGE if your cluster stores it elsewhere.
-APPAINTER_IMAGE="${APPAINTER_IMAGE:-/project/containers/pytorch-2.3.1-cuda11.8.sif}"
-if [[ -z "${APPAINTER_IMAGE}" ]]; then
-  echo "APPAINTER_IMAGE is not set. Export it before calling sbatch." >&2
-  exit 1
+DEFAULT_IMAGE="${SCRATCH_ROOT}/appainter/appainter.sif"
+if [[ -z "${APPAINTER_IMAGE:-}" ]]; then
+  if [[ -f "${DEFAULT_IMAGE}" ]]; then
+    APPAINTER_IMAGE="${DEFAULT_IMAGE}"
+  else
+    APPAINTER_IMAGE="/project/containers/pytorch-2.3.1-cuda11.8.sif"
+  fi
 fi
 if [[ ! -f "${APPAINTER_IMAGE}" ]]; then
-  echo "Apptainer image not found at ${APPAINTER_IMAGE}. Override APPAINTER_IMAGE to the provided SIF." >&2
+  echo "Apptainer image not found at ${APPAINTER_IMAGE}. Build env/apptainer.def into ${DEFAULT_IMAGE} or override APPAINTER_IMAGE." >&2
   exit 1
+fi
+if [[ "${APPAINTER_IMAGE}" == "/project/containers/pytorch-2.3.1-cuda11.8.sif" ]]; then
+  echo "Using shared PyTorch image; slurm/run.sh will self-install DeepSpeed/Transformers into ${EXPERIMENT_ROOT}/.venv."
 fi
 
 if [[ ! -d "${CODE_ROOT}" ]]; then
