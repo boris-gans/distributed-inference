@@ -7,6 +7,10 @@ rsync -av \
   run_distributed_inference.py \
   user49@hpcie.labs.faculty.ie.edu:/home/user49/projects/def-sponsor00/user49/distributed-inference
 
+rsync -av \
+  slurm \
+  run_distributed_inference.py \
+  user49@hpcie.labs.faculty.ie.edu:/home/user49
 
 rsync -av \
   models/openllama-3b \

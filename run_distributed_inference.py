@@ -140,6 +140,10 @@ def partition_model(
     )
     num_layers = config.num_hidden_layers
     hidden_size = config.hidden_size
+    config.use_cache = False
+    config.pretraining_tp = 1
+    config._attn_implementation = "eager"
+
     split = split_idx or (num_layers // 2)
 
     # STEP 2 — Build minimal device_map so this rank loads only its layers
@@ -156,23 +160,35 @@ def partition_model(
         if i in layer_ids:
             device_map[f"model.layers.{i}"] = device.type  # cuda
         else:
-            device_map[f"model.layers.{i}"] = "meta"       # throwaway layers; other node loads these but must specify
+            device_map[f"model.layers.{i}"] = "disk"       # throwaway layers; other node loads these but must specify
 
     if stage == 0:
         device_map["model.embed_tokens"] = device.type
 
         # Rank 0 does NOT take lm_head or final norm, load anyway to avoid error
-        device_map["model.norm"] = "meta"
-        device_map["lm_head"] = "meta"
+        device_map["model.norm"] = "disk"
+        device_map["lm_head"] = "disk"
     else:
         # Rank 1 keeps final layers + norm + lm_head
         device_map["model.norm"] = device.type
         device_map["lm_head"] = device.type
 
         # Load ALL required modules onto CPU, even if layer 2 won't use them (avoid error)
-        device_map["model.embed_tokens"] = "meta"
+        device_map["model.embed_tokens"] = "disk"
 
     logger.info("Stage %d device_map=%s", stage, device_map)
+
+    # ---------------------------------------------
+    # MONKEYPATCH: Disable all HF LlamaDecoderLayer allocations
+    # (must be BEFORE from_pretrained)
+    # ---------------------------------------------
+    from transformers.models.llama.modeling_llama import LlamaDecoderLayer
+    import torch.nn as nn
+
+    def empty_layer_init(self, config):
+        nn.Module.__init__(self)  # no parameters, no buffers, no allocations
+
+    LlamaDecoderLayer.__init__ = empty_layer_init
 
     # STEP 3 — Load ONLY the layers for this stage (zero CPU spike)
     model = AutoModelForCausalLM.from_pretrained(
@@ -182,7 +198,10 @@ def partition_model(
         local_files_only=True,
         low_cpu_mem_usage=True,
         device_map=device_map,  # <<< prevents full CPU load
+        offload_folder=f"/tmp/offload_rank_{stage}",  # must be unique per rank
     )
+
+    logger.info("Loaded model...")
 
     # HF loads submodules directly to the right GPU → no manual trimming needed
     # But your pipeline code expects a simplified Module, so extract it:

@@ -150,7 +150,13 @@ cat /home/<YOUR-USER>/scratch/group1/hpc-runs/llama_pipeline-<JOB-ID>.err
 
 Once the job has finished, pull the results back to your local workstation:
 ```bash
-# TODO
+# First ensure ALL logs/info are outside the cluster (per-rank logs aren't binded); do this on the cluster
+cp -r /tmp/workspace/outputs ${SCRATCH_ROOT}/pipeline_run/outputs
+
+# Then locally:
+rsync -avz --progress \
+    <YOUR-USER>@hpcie.labs.faculty.ie.edu:${SCRATCH_ROOT}/pipeline_run/outputs \
+    ./outputs
 ```
 
 
