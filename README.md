@@ -2,7 +2,7 @@
 
 ## Overview
 Many large language models are too large to fit on a single GPU, so even inference requires multi-GPU, multi-node execution.
-This project implements and benchmarks a POC, using a small 3B model and a distributed inference pipeline using **PyTorch** with **DeepSpeed Inference** (which uses **NCCL** for GPU communication). The model we choose was [OpenLLaMA 3B v2](https://huggingface.co/openlm-research/open_llama_3b_v2), due to it's small size and permissive license. Detailed [report](docs/report-distributed-inference.pdf) available.
+This project implements and benchmarks a POC, using a small 3B model and a distributed inference pipeline using **PyTorch** with **DeepSpeed Inference** (which uses **NCCL** for GPU communication). The model we choose was [OpenLLaMA 3B v2](https://huggingface.co/openlm-research/open_llama_3b_v2), due to it's small size and permissive license. Detailed [report](docs/report-distributed-inference.pdf) available, as well as our video [presentation](https://www.youtube.com/watch?v=c8YseDJsAxE).
 
 ### A note on the outcome
 Ultimately, the distributed inference component could not be made to run successfully on the cluster, despite multiple attempts and several architectural redesigns. The combination of:
