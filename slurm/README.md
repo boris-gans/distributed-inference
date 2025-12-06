@@ -1,28 +1,8 @@
-<!-- Slurm usage notes for submitting, monitoring, and interpreting distributed inference jobs. -->
+Slurm job assets (what each file is for and what it contains):
 
-### Submit.sbatch
-
-The Slurm submission script. It:
--   defines job resources
--   launches the appainter container
-
-IUt mounts a shared host directory inside the container, containing:
--   exp_config.json
--   ds_config.json
--   input files
--   an outputs directory
-
-### run.sh
-
-The script that gets executed inside the container. It:
--   Reads env variables set by Slurm (above)
--   Launch the actual distributed job
-
-### launch_pipeline.sh (helper)
-
-Just a front-end wrapper. It:
--   ensures the env variable APPAINTER_IMAGE is set
--   checks whether the shared host directory contains the required files
--   creates missing items automatically (empty configs or directories)
-
-It calls **submit.sbatch**
+- `submit.sbatch` — Slurm submission script. Sets resources, binds host paths into the Apptainer container, precomputes `MASTER_ADDR`, stages configs/prompts from `CODE_ROOT/slurm` into scratch, and launches `slurm/run.sh` via `apptainer exec`.
+- `run.sh` — In-container launcher executed by `submit.sbatch`. Wires Slurm env → `torch.distributed`, sets NCCL/env defaults, provisions missing Python deps into `${EXPERIMENT_ROOT}/.venv`, and runs `python /app/run_distributed_inference.py` with paths under `/tmp/workspace`.
+- `launch_pipeline.sh` — Convenience wrapper to submit the job from the login node. Ensures `APPAINTER_IMAGE` and scratch directories exist, creates placeholder configs if missing, and calls `sbatch submit.sbatch` with the right env vars.
+- `exp_config.json` — Experiment settings consumed by `run_distributed_inference.py` (model name/path, prompt path, inference params like `max_new_tokens`, batch size, outputs). Default paths assume `/tmp/workspace/...` inside the container.
+- `ds_config.json` — DeepSpeed/distributed settings for pipeline size, tensor parallel (1), and batch sizes. Used by the runtime entrypoint for validation.
+- `prompts.jsonl` — Prompt payload of only the ~2k token variant, as expected by the entrypoint. Update as neccessary (as problem size increases or if you want to test performance of longer prompts).
