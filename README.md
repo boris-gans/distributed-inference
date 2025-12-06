@@ -194,35 +194,7 @@ rsync -avz --progress \
 
 ## Cluster File Structure
 
-```
-Host prep (before sbatch)
-/home/<USER>/projects/def-sponsor00/<USER>/distributed-inference   # CODE_ROOT synced from laptop (slurm/, src/run_distributed_inference.py)
-/home/<USER>/scratch/group1/pipeline_run                          # SCRATCH_ROOT/PROJECT_ROOT/PIPELINE_ROOT (shared runtime data)
-├── exp_config.json                                               # copied from CODE_ROOT/slurm at submit time
-├── ds_config.json                                                # copied from CODE_ROOT/slurm at submit time
-├── prompts.jsonl                                                 # copied from CODE_ROOT/slurm at submit time
-└── outputs/                                                      # initially empty; Slurm stdout/err go to ${SCRATCH_ROOT}/hpc-runs
-/home/<USER>/scratch/group1/models/openllama-3b                   # model snapshot reused by all nodes
-/home/<USER>/projects/def-sponsor00/shared/images/pytorch-2.3.1-cuda11.8.sif  # APPAINTER_IMAGE (or ${SCRATCH_ROOT}/appainter/appainter.sif)
-
-Container view during the job (binds set in slurm/submit.sbatch)
-/app/                        -> ${CODE_ROOT} (src/run_distributed_inference.py, slurm/run.sh)
-/tmp/workspace/              -> ${SCRATCH_ROOT}/pipeline_run
-├── exp_config.json
-├── ds_config.json
-├── prompts.jsonl
-├── outputs/
-│   ├── rank_0.log, rank_1.log
-│   ├── completions_rank_0.jsonl, completions_rank_1.jsonl
-│   ├── sacct_<jobid>.txt (if sacct is available)
-│   ├── nsys_rank_<r>.* or perf_rank_<r>.txt (when PROFILER is set)
-│   └── other per-rank stdout from run.sh
-├── hf_cache/                # Hugging Face cache populated at runtime
-├── .venv/                   # runtime Python deps installed by slurm/run.sh
-├── .pip-cache/, .triton-cache/
-└── (any ad-hoc configs you add under ${PIPELINE_ROOT})
-/workspace/models/openllama-3b -> ${SCRATCH_ROOT}/models/openllama-3b
-```
+![Cluster File Structure](docs/file-structure.png)
 
 
 ## Resources
