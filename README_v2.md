@@ -38,44 +38,34 @@ By doing so, we ensure the model fits within a node and we have a clean scaling 
 *Note: If we had access to more GPU nodes, we would perform at least four iterations of the above*
 
 ### Cluster Topology:
-**OUTDATED; NO TP**
+```mermaid
+flowchart TB
+    %% Title
+    A0["Input Prompt Batch"]
 
+    %% Stage 0 (top)
+    subgraph N0["Node 0 — Pipeline Stage 0"]
+        direction TB
+        S0A["Embed Tokens"]
+        S0B["Layers 0–12"]
+        GPU0["GPU0"]
+    end
 
-                    ┌─────────────────────────────────────────────────────────────┐
-                    │                DeepSeek-70B Inference Cluster               │
-                    └─────────────────────────────────────────────────────────────┘
-                                                  │
-                                                  ▼
-                                  ┌──────────────────────────────────┐
-                                  │        Input Prompt Batch        │
-                                  └──────────────────────────────────┘
-                                                  │
-                              ┌───────────────────┼──────────────────────┐
-                              │                   │                      │
-                              ▼                   ▼                      ▼
+    %% Stage 1 (bottom)
+    subgraph N1["Node 1 — Pipeline Stage 1"]
+        direction TB
+        S1A["Layers 13–25"]
+        S1B["Final Norm"]
+        S1C["LM Head"]
+        GPU1["GPU1"]
+    end
 
-                    ┌────────────────────-─┐   ┌────────────────────-─┐   ┌─────────────────────┐
-                    │  Node 0 (Stage 0)    │   │  Node 1 (Stage 1)    │   │  Node 2 (Stage 2)   │
-                    │  Layers 0–N/3        │   │  Layers N/3–2N/3     │   │  Layers 2N/3–N      │
-                    │  Tensor Parallel = 2 │   │  Tensor Parallel = 2 │   │  Tensor Parallel = 2│
-                    └─────────────────────-┘   └────────────────────-─┘   └─────────────────────┘
-                              │                   │                      │
-                              ▼                   ▼                      ▼
+    %% Connections
+    A0 --> N0
+    N0 -->|Activations + KV-cache| N1
+    N1 --> FOUT["Final Output"]
 
-                        ┌───────────────────┐      ┌───────────────────┐      ┌───────────────────┐
-                        │ GPU0 ──┐          │      │ GPU2 ──┐          │      │ GPU4 ──┐          │
-                        │ GPU1 ──┼─ NVLink ─┼─ TP  │ GPU3 ──┼─ NVLink ─┼─ TP  │ GPU5 ──┼─ NVLink ─┼─ TP
-                        │        └─ intra ──┘      │        └─ intra ──┘      │        └─ intra ──┘
-                        │       node comm          │       node comm          │       node comm
-                        └───────────────────┘      └───────────────────┘      └───────────────────┘
-                              │                   │                      │
-                              │<────────── Pipeline (activations, KV-cache) ───────────│
-                              │                   │                      │
-                              ▼                   ▼                      ▼
-
-                      ┌────────────────┐   ┌────────────────┐   ┌────────────────┐
-                      │  Partial Out   │   │  Partial Out   │   │   Final Output │
-                      └────────────────┘   └────────────────┘   └────────────────┘
+```
 
 
 ## Quick Start
@@ -184,46 +174,35 @@ rsync -avz --progress \
 
 
 ## Cluster File Structure
-**outdated; TO DO**
-
-Professor guidance: keep code tiny in `/home`, persist important assets in `/project`, and put large/temporary runtime data in `/scratch`. On this cluster you have `/home/user49/projects` and `/scratch/user49`. The job should mount `/scratch/user49/pipeline_run` (shared, fast) into `/workspace` for all nodes; that is where configs, outputs, and the Hugging Face model cache live. Only `/slurm`, `env/appainter.sif`, and `run_distributed_inference.py` are staged; the model downloads at runtime into shared storage so all nodes reuse it.
 
 ```
-Host layout (what exists before sbatch)
-/home/user49/projects/distributed-inference/   # code only (small)
-├── slurm/                                     # submit.sbatch, run.sh, etc.
-├── run_distributed_inference.py               # source copy
-└── env/appainter.sif                          # if small; otherwise place in /project/user49/appainter/appainter.sif
+Host prep (before sbatch)
+/home/<USER>/projects/def-sponsor00/<USER>/distributed-inference   # CODE_ROOT synced from laptop (slurm/, run_distributed_inference.py)
+/home/<USER>/scratch/group1/pipeline_run                          # SCRATCH_ROOT/PROJECT_ROOT/PIPELINE_ROOT (shared runtime data)
+├── exp_config.json                                               # copied from CODE_ROOT/slurm at submit time
+├── ds_config.json                                                # copied from CODE_ROOT/slurm at submit time
+├── prompts.jsonl                                                 # copied from CODE_ROOT/slurm at submit time
+└── outputs/                                                      # initially empty; Slurm stdout/err go to ${SCRATCH_ROOT}/hpc-runs
+/home/<USER>/scratch/group1/models/openllama-3b                   # model snapshot reused by all nodes
+/home/<USER>/projects/def-sponsor00/shared/images/pytorch-2.3.1-cuda11.8.sif  # APPAINTER_IMAGE (or ${SCRATCH_ROOT}/appainter/appainter.sif)
 
-/project/user49/appainter/                     # persistent, if available (preferred spot for the SIF)
-└── appainter.sif                              # built from env/appainter.def
-
-/scratch/user49/pipeline_run/                  # EXPERIMENT_ROOT (shared across nodes/ranks; mounted to /workspace)
-├── exp_config.json                            # you place here before sbatch
-├── ds_config.json                             # you place here before sbatch
-├── slurm/                                     # optional copy of run.sh if you launch via /workspace/slurm/run.sh
-├── outputs/                                   # created at runtime (shared)
-│   ├── rank_0.log
-│   ├── rank_1.log
-│   ├── completions_rank_0.jsonl
-│   ├── completions_rank_1.jsonl
-│   ├── sacct_<jobid>.txt                      # if sacct available (written by rank 1)
-│   ├── nsys_rank_<r>.*                        # if PROFILER=nsys
-│   └── perf_rank_<r>.txt                      # if PROFILER=perf
-└── hf_cache/                                  # Hugging Face cache; model+tokenizer download happens here once
-
-Inside any node (container view during the job)
-/app/
-├── run_distributed_inference.py               # baked into the SIF
-└── (optionally) run.sh                        # if you baked it; otherwise use the bind-mounted copy
-/workspace/                                    # bind-mounted from /scratch/user49/pipeline_run
+Container view during the job (binds set in slurm/submit.sbatch)
+/app/                        -> ${CODE_ROOT} (run_distributed_inference.py, slurm/run.sh)
+/tmp/workspace/              -> ${SCRATCH_ROOT}/pipeline_run
 ├── exp_config.json
 ├── ds_config.json
-├── outputs/                                   # shared logs/results/profiles
-└── hf_cache/                                  # shared model/tokenizer cache (downloaded once, reused by all nodes)
-
-Per-node local (outside the mount, if any)
-/tmp/, /var/tmp/                               # not used by default; no model copies here unless you change HF cache
+├── prompts.jsonl
+├── outputs/
+│   ├── rank_0.log, rank_1.log
+│   ├── completions_rank_0.jsonl, completions_rank_1.jsonl
+│   ├── sacct_<jobid>.txt (if sacct is available)
+│   ├── nsys_rank_<r>.* or perf_rank_<r>.txt (when PROFILER is set)
+│   └── other per-rank stdout from run.sh
+├── hf_cache/                # Hugging Face cache populated at runtime
+├── .venv/                   # runtime Python deps installed by slurm/run.sh
+├── .pip-cache/, .triton-cache/
+└── (any ad-hoc configs you add under ${PIPELINE_ROOT})
+/workspace/models/openllama-3b -> ${SCRATCH_ROOT}/models/openllama-3b
 ```
 
 

@@ -23,3 +23,6 @@ models/openllama-7b/*.model
 models/openllama-7b/*.json
 models/openllama-7b/.gitattributes
 models/openllama-7b/.cache/
+
+/docs/*.md
+/docs/*.txt

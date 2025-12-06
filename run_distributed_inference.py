@@ -41,6 +41,7 @@ class ExpConfig:
     max_new_tokens: int
     temperature: float = 0.0
     seed: int = 42
+    batch_size: int = 1
 
 
 def parse_args() -> argparse.Namespace:
@@ -48,12 +49,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--exp_config", type=Path, required=True, help="Path to experiment config JSON.")
     parser.add_argument("--ds_config", type=Path, required=True, help="Path to DeepSpeed config JSON.")
     parser.add_argument("--output_dir", type=Path, required=True, help="Shared output directory.")
+    parser.add_argument("--prompt_limit", type=int, default=None, help="Optional limit on number of prompts to run.")
+    parser.add_argument("--batch_size", type=int, default=None, help="Optional batch size override.")
+    parser.add_argument("--pipeline_size", type=int, default=None, help="Optional pipeline/world size override.")
     return parser.parse_args()
 
 
 def load_json(path: Path) -> dict:
     with Path(path).open("r") as handle:
         return json.load(handle)
+
+
+def _env_int(name: str) -> Optional[int]:
+    val = os.environ.get(name)
+    if val is None or val == "":
+        return None
+    try:
+        return int(val)
+    except ValueError:
+        return None
 
 
 def load_exp_config(path: Path) -> ExpConfig:
@@ -68,6 +82,7 @@ def load_exp_config(path: Path) -> ExpConfig:
             max_new_tokens=int(cfg["inference"].get("max_new_tokens", 64)),
             temperature=float(cfg["inference"].get("temperature", 0.0)),
             seed=int(cfg.get("seed", 42)),
+            batch_size=int(cfg.get("inference", {}).get("batch_size", 1)),
         )
     except KeyError as exc:
         raise SystemExit(f"Missing required exp_config field: {exc}") from exc
@@ -177,18 +192,6 @@ def partition_model(
         device_map["model.embed_tokens"] = "disk"
 
     logger.info("Stage %d device_map=%s", stage, device_map)
-
-    # ---------------------------------------------
-    # MONKEYPATCH: Disable all HF LlamaDecoderLayer allocations
-    # (must be BEFORE from_pretrained)
-    # ---------------------------------------------
-    from transformers.models.llama.modeling_llama import LlamaDecoderLayer
-    import torch.nn as nn
-
-    def empty_layer_init(self, config):
-        nn.Module.__init__(self)  # no parameters, no buffers, no allocations
-
-    LlamaDecoderLayer.__init__ = empty_layer_init
 
     # STEP 3 — Load ONLY the layers for this stage (zero CPU spike)
     model = AutoModelForCausalLM.from_pretrained(
@@ -437,6 +440,13 @@ def main() -> None:
     exp_cfg = load_exp_config(args.exp_config)
     ds_cfg = load_json(args.ds_config)
 
+    # Optional overrides: CLI > env > config
+    prompt_limit = args.prompt_limit or _env_int("PROMPT_LIMIT")
+    batch_override = args.batch_size or _env_int("BATCH_SIZE")
+    pipeline_override = args.pipeline_size or _env_int("PIPELINE_SIZE") or _env_int("NUM_NODES")
+    if batch_override is not None:
+        exp_cfg.batch_size = batch_override
+
     # Enable NVTX markers when PROFILER=nsys
     use_nvtx = os.environ.get("PROFILER", "").lower() == "nsys"
 
@@ -455,25 +465,40 @@ def main() -> None:
     torch.cuda.manual_seed_all(exp_cfg.seed)
 
     world_size = dist.get_world_size()
-    pipeline_size = int(ds_cfg.get("distributed_training", {}).get("pipeline_parallel_size", 0))
-    if world_size != pipeline_size or world_size != 2:
+    pipeline_size = (
+        pipeline_override
+        or int(ds_cfg.get("distributed_training", {}).get("pipeline_parallel_size", 0))
+        or world_size
+    )
+    if world_size != pipeline_size:
         logger.warning(
-            "Expected world_size == pipeline_parallel_size == 2, got world_size=%d, pipeline=%d",
+            "world_size (%d) != pipeline_parallel_size (%d); proceeding anyway.",
             world_size,
             pipeline_size,
         )
 
     prompts = read_prompts(exp_cfg.prompt_path)
+    if prompt_limit is not None:
+        prompts = prompts[:prompt_limit]
+        logger.info("Applying prompt limit: %d prompts", len(prompts))
+    if exp_cfg.batch_size > 1:
+        logger.info(
+            "Batch size override set to %d; prompts will be processed sequentially per item.",
+            exp_cfg.batch_size,
+        )
 
     cache_dir = Path(os.environ["HF_HOME"])
     # If model_path is provided, use it; otherwise fall back to model_name (HF hub)
     model_ref = str(exp_cfg.model_path) if exp_cfg.model_path else exp_cfg.model_name
     tokenizer = load_tokenizer(model_ref, cache_dir, logger)
 
+    config = AutoConfig.from_pretrained(model_ref, cache_dir=cache_dir, local_files_only=True)
+    split_idx = max(1, config.num_hidden_layers // pipeline_size) if pipeline_size > 1 else config.num_hidden_layers
+
     stage_module, hidden_size = partition_model(
         model_name=model_ref,
         cache_dir=cache_dir,
-        split_idx=None,
+        split_idx=split_idx,
         device=device,
         stage=rank,
         logger=logger,

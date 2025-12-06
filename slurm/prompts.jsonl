@@ -1,2 +1,20 @@
 {"id": "2k_1", "variant": "2k", "prompt": "Explain how quantum entanglement differs from classical correlation and why it violates local realism.", "token_budget": 2000}
 {"id": "2k_2", "variant": "2k", "prompt": "Summarize the key factors that determine scalability in distributed inference for large language models.", "token_budget": 2000}
+{"id": "2k_3", "variant": "2k", "prompt": "Write a Python function that parallelizes matrix multiplication across multiple GPUs using PyTorch.", "token_budget": 2000}
+{"id": "2k_4", "variant": "2k", "prompt": "Compare the philosophical views of Kant and Hume on the nature of human knowledge.", "token_budget": 2000}
+{"id": "2k_5", "variant": "2k", "prompt": "Describe how ocean currents affect global climate patterns.", "token_budget": 2000}
+{"id": "2k_6", "variant": "2k", "prompt": "Provide a detailed critique of the efficiency of transformer architectures compared to RNNs.", "token_budget": 2000}
+{"id": "2k_7", "variant": "2k", "prompt": "Explain the ethical considerations of deploying AI models in decision-making systems.", "token_budget": 2000}
+{"id": "2k_8", "variant": "2k", "prompt": "Generate a creative short story about a researcher who discovers communication with an alien AI.", "token_budget": 2000}
+{"id": "2k_9", "variant": "2k", "prompt": "Derive the formula for kinetic energy from Newton’s laws and explain its physical meaning.", "token_budget": 2000}
+{"id": "2k_10", "variant": "2k", "prompt": "Analyze the economic impact of renewable energy adoption on emerging markets.", "token_budget": 2000}
+{"id": "2k_11", "variant": "2k", "prompt": "Discuss how caching strategies can reduce latency in large-scale inference pipelines.", "token_budget": 2000}
+{"id": "2k_12", "variant": "2k", "prompt": "Translate the following English paragraph into fluent French while preserving tone and nuance.", "token_budget": 2000}
+{"id": "2k_13", "variant": "2k", "prompt": "Explain why batch normalization improves training stability in deep neural networks.", "token_budget": 2000}
+{"id": "2k_14", "variant": "2k", "prompt": "Describe the process of protein folding and its significance in drug design.", "token_budget": 2000}
+{"id": "2k_15", "variant": "2k", "prompt": "Write pseudocode for a load balancer that distributes API requests across inference servers.", "token_budget": 2000}
+{"id": "2k_16", "variant": "2k", "prompt": "Compare IPv4 and IPv6 addressing schemes and discuss transition strategies.", "token_budget": 2000}
+{"id": "2k_17", "variant": "2k", "prompt": "Explain the concept of memory consistency in distributed computing.", "token_budget": 2000}
+{"id": "2k_18", "variant": "2k", "prompt": "Provide a step-by-step plan for fine-tuning a 70B parameter model on a new domain.", "token_budget": 2000}
+{"id": "2k_19", "variant": "2k", "prompt": "Write a persuasive paragraph arguing for or against universal basic income.", "token_budget": 2000}
+{"id": "2k_20", "variant": "2k", "prompt": "Explain how a black hole’s event horizon relates to information loss.", "token_budget": 2000}

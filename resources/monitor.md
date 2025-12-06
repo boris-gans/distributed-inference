@@ -14,6 +14,11 @@ tail -f /home/user49/scratch/group1/hpc-runs/llama_pipeline-4231.out | ts
 
 scancel 
 
+
+squeue -o "%.18i %.8u %.10P %.8T %.30R"
+
+squeue --sort=u -o "%.8u %.18i %.8T %N"
+
 ```
 
 

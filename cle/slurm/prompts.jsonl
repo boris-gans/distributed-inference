@@ -1,2 +1,0 @@
-{"id": "2k_1", "variant": "2k", "prompt": "Explain how quantum entanglement differs from classical correlation and why it violates local realism.", "token_budget": 2000}
-{"id": "2k_2", "variant": "2k", "prompt": "Summarize the key factors that determine scalability in distributed inference for large language models.", "token_budget": 2000}
