@@ -10,7 +10,6 @@
 #SBATCH --error=/home/%u/scratch/group1/hpc-runs/%x-%j.err
 # Update the paths above if you change SCRATCH_ROOT.
 
-# submit.sbatch
 # Single pipeline-parallel launch with fixed config paths.
 # Usage: sbatch submit.sbatch (or via slurm/launch_pipeline.sh)
 

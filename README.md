@@ -1,110 +1,94 @@
-# Distributed Inference of Llama 3.3 70B on Multi-GPU Clusters
+# Distributed Inference
 
 ## Overview
-Large language models such as Llama 3.3 70B are too large to fit on a single GPU, so even inference requires multi-GPU, multi-node execution.  
-This project implements and benchmarks a distributed inference pipeline using **PyTorch** with **DeepSpeed Inference** (which uses **NCCL** for GPU communication).  
-CPU nodes are optionally used for orchestration and preprocessing, allowing us to explore hybrid CPU–GPU performance.
+Many large language models are too large to fit on a single GPU, so even inference requires multi-GPU, multi-node execution.
+This project implements and benchmarks a POC, using a small 3B model and a distributed inference pipeline using **PyTorch** with **DeepSpeed Inference** (which uses **NCCL** for GPU communication). The model we choose was [OpenLLaMA 3B v2](https://huggingface.co/openlm-research/open_llama_3b_v2), due to it's small size and permissive license.
+
+### A note on the outcome
+Ultimately, the distributed inference component could not be made to run successfully on the cluster, despite multiple attempts and several architectural redesigns. The combination of:
+- single-GPU nodes (NVIDIA T4, 16 GB)
+- the absence of NVLink
+- aggressive offloading requirements due to limited storage
+- and limitations in the Hugging Face / PyTorch weight-loading paths
+
+Created a situation where the model partitions could not be reliably mapped to separate devices. These issues manifested as crashes during model construction (unassigned parameters, device-mapping failures, OOM errors, etc.), preventing the full pipeline from ever entering a runnable steady state.
+
+Even though the final distributed execution was not achieved, the project served as a valuable learning experience, helping to illuminate the practical challenges of multi-node inference on resource-limited HPC systems. The work done here forms a solid foundation for a future iteration on a more appropriate multi-GPU cluster.
+
+### Code Structure and Unused Components
+
+You will notice that the repository contains several modules and scripts that never execute on the cluster itself. This is intentional. The original design of the project envisioned a full end-to-end workflow, where:
+1. A job would be submitted remotely to Slurm
+2. The cluster would run the multi-GPU inference pipeline
+3. Results would be pulled back automatically
+4. Metrics, visualizations, and scaling plots would be computed locally
+5. Everything—from cluster run to graphs—would be reproducible from a single entry point.
+
+Because the distributed runtime never became functional on the cluster, this “post-processing” portion of the pipeline never reached the execution stage. However, the code remains in the repository because it represents the full intended workflow and they still reflect the general architecture of the project. They will be directly useful once a working distributed runtime exists.
 
 ## Objectives
-- Run Llama 3.3 70B inference on 2–3 GPU nodes under **Slurm**.
-- Measure "correctness" of the model through comparing a set of 20 prompts with a baseline  
-- Measure scaling (throughput / latency / efficiency) from 1 → N nodes.
-- Profile compute vs. communication time using **Nsight Systems**, **perf**, and **sacct**.  
-- Package everything in an **Apptainer** container for full reproducibility.  
-- Produce a short paper and EuroHPC proposal describing results and scaling limits.
+- Run OpenLLaMA v2 3B inference on 2 GPU nodes under **Slurm**.
+- Measure "correctness" of the model through comparing a set of 20 prompts with a baseline 
+- Measure strong and weak scaling (throughput / latency / efficiency) from 1 → 2 nodes.
+- Conduct a batch size sweep to evaluate the parameter's affect (memory and throughput) 
+- Quantize the model to explore the balance between performance and accuracy
+- Profile compute vs. communication time using **INSERT HERE**.   
+- Produce a short paper describing results and scaling limits.
 
 ## Tech Stack
 - **PyTorch** — model runtime  
-- **DeepSpeed Inference** — tensor + pipeline parallelism  
+- **DeepSpeed Inference** — Pipeline parallelism  
 - **NCCL** — GPU–GPU communication backend  
 - **Slurm** — cluster scheduling  
 - **Apptainer** — containerization  
-- **Nsight / perf / sacct** — profiling and performance analysis
+- **sacct** — profiling and performance analysis
 
-## Model Hyperparameters
-
-* **L, H, D**: `L=80`, `H=64`, `D=128` (hidden size `8192`).
-* **KV per token (BF16/FP16)**: `~2.5 MiB`.
-  * KV@2k: **5.0 GiB** total; KV@4k: **10.0 GiB** total (batch=1).
-  * **Per-GPU KV** = total_KV / (**TP×PP**).
-* **Weights** (BF16): 70e9 x 2B = **~130.4 GiB** total = **~140 GB** decimal.
-  * **Per-GPU weights** = total_weights / (**TP×PP**).
-* **Other activations** (non-KV) budget: **~2 GiB/GPU** (tune with measurements).
-* **Overhead** budget: **~6 GiB/GPU** (CUDA/NCCL/allocator/workspaces).
-  * **Batch-size > 1** Activation memory (including KV) scales lineary with batch-size
-
-
-This table shows the **per GPU memory**, assuming 8 GPUs (TPxPP always equals 8, regardless of cluster config).
-
-
-| Component         | Formula                     | Value (GiB) |
-| ----------------- | --------------------------- | ----------- |
-| Weights           | 130.4 / (TP×PP) = 130.4 / 8 | **16.30**   |
-| KV @ **2k**       | 5.0 / 8                     | **0.625**   |
-| KV @ **4k**       | 10.0 / 8                    | **1.25**    |
-| Other activations | fixed                       | **2.0**     |
-| Overhead          | fixed                       | **6.0**     |
-| **Total @ 2k**    | sum                         | **24.93**   |
-| **Total @ 4k**    | sum                         | **25.55**   |
-
-<hr>
 
 ## Cluster Configuration
-Our model will implement two parallelism techniques:
+Our model will implement Pipeline Parallelism (PP) across nodes.
 
-- Tensor Parallelism (TP) across all GPUs within a node
-- Pipeline Parallelism (PP) across nodes
-
-By doing so, we ensure the model fits within a node (through TP) and we have a clean scaling axis (through PP). Our scaling experiments will go as follows:
+By doing so, we ensure the model fits within a node and we have a clean scaling axis. Our scaling experiments will go as follows:
 
   | Nodes | GPUs/node | TP | PP | Total GPUs |
   | ----- | --------- | -- | -- | ---------- |
-  | 1     | 2         | 2  | 1  | 2          |
-  | 2     | 2         | 2  | 2  | 4          |
-  | 3     | 2         | 2  | 3  | 8          |
+  | 1     | 1         | 2  | 1  | 1          |
+  | 2     | 1         | 2  | 2  | 2          |
 
+*Note: If we had access to more GPU nodes, we would perform at least four iterations of the above*
 
 ### Cluster Topology:
+```mermaid
+flowchart TB
+    %% Title
+    A0["Input Prompt Batch"]
 
-                    ┌─────────────────────────────────────────────────────────────┐
-                    │                DeepSeek-70B Inference Cluster               │
-                    └─────────────────────────────────────────────────────────────┘
-                                                  │
-                                                  ▼
-                                  ┌──────────────────────────────────┐
-                                  │        Input Prompt Batch        │
-                                  └──────────────────────────────────┘
-                                                  │
-                              ┌───────────────────┼──────────────────────┐
-                              │                   │                      │
-                              ▼                   ▼                      ▼
+    %% Stage 0 (top)
+    subgraph N0["Node 0 — Pipeline Stage 0"]
+        direction TB
+        S0A["Embed Tokens"]
+        S0B["Layers 0–12"]
+        GPU0["GPU0"]
+    end
 
-                    ┌────────────────────-─┐   ┌────────────────────-─┐   ┌─────────────────────┐
-                    │  Node 0 (Stage 0)    │   │  Node 1 (Stage 1)    │   │  Node 2 (Stage 2)   │
-                    │  Layers 0–N/3        │   │  Layers N/3–2N/3     │   │  Layers 2N/3–N      │
-                    │  Tensor Parallel = 2 │   │  Tensor Parallel = 2 │   │  Tensor Parallel = 2│
-                    └─────────────────────-┘   └────────────────────-─┘   └─────────────────────┘
-                              │                   │                      │
-                              ▼                   ▼                      ▼
+    %% Stage 1 (bottom)
+    subgraph N1["Node 1 — Pipeline Stage 1"]
+        direction TB
+        S1A["Layers 13–25"]
+        S1B["Final Norm"]
+        S1C["LM Head"]
+        GPU1["GPU1"]
+    end
 
-                        ┌───────────────────┐      ┌───────────────────┐      ┌───────────────────┐
-                        │ GPU0 ──┐          │      │ GPU2 ──┐          │      │ GPU4 ──┐          │
-                        │ GPU1 ──┼─ NVLink ─┼─ TP  │ GPU3 ──┼─ NVLink ─┼─ TP  │ GPU5 ──┼─ NVLink ─┼─ TP
-                        │        └─ intra ──┘      │        └─ intra ──┘      │        └─ intra ──┘
-                        │       node comm          │       node comm          │       node comm
-                        └───────────────────┘      └───────────────────┘      └───────────────────┘
-                              │                   │                      │
-                              │<────────── Pipeline (activations, KV-cache) ───────────│
-                              │                   │                      │
-                              ▼                   ▼                      ▼
+    %% Connections
+    A0 --> N0
+    N0 -->|Activations + KV-cache| N1
+    N1 --> FOUT["Final Output"]
 
-                      ┌────────────────┐   ┌────────────────┐   ┌────────────────┐
-                      │  Partial Out   │   │  Partial Out   │   │   Final Output │
-                      └────────────────┘   └────────────────┘   └────────────────┘
+```
 
 
 ## Quick Start
-**For now (dev):**
+### Local pipeline (ignore for now):
 ```bash
 git clone https://github.com/boris-gans/distributed-inference.git
 cd distributed-inference
@@ -124,151 +108,100 @@ python -m src.inference --no-override
 python -m src.inference --override --variant=2k --limit=1
 ```
 
-**Outdated:**
-```bash
-git clone https://github.com/boris-gans/distributed-inference.git
-cd deepseek-hpc/env
-apptainer build deepseek.sif project.def
-sbatch slurm/submit_inference.sbatch
+### On the cluster:
+``` bash
+# Install and authenticate HF cli first: https://huggingface.co/docs/huggingface_hub/main/en/guides/cli
+hf download openlm-research/open_llama_3b --include="*" --local-dir models/
 
-# Local debug workflow (CPU only)
-python -m src.inference --input data/sample_inputs.txt --local_debug --output results/local_debug.jsonl
+rsync -av \
+  slurm \
+  src/run_distributed_inference.py \
+  <YOUR-USER>@hpcie.labs.faculty.ie.edu:/home/<YOUR-USER>/projects/def-sponsor00/<YOUR-USER>/distributed-inference
 
-# Orchestrate local workers
-python -m src.orchestrator --input data/sample_inputs.txt --local_debug --num_workers 2 --dispatch_size 4
+# Note: this will take a while and is about 6GB. Do this once per group, not user
+rsync -av \
+  models/openllama-3b \
+  user49@hpcie.labs.faculty.ie.edu:/home/user49/scratch/group1/models/
+
+# Note: I have the hostname configured in ~/.ssh/config to resolve hpcie for user49 at the real host
+ssh hpcie 
+
+export APPAINTER_IMAGE=/home/user49/projects/def-sponsor00/shared/images/pytorch-2.3.1-cuda11.8.sif
+export PIPELINE_ROOT=/home/user49/scratch/group1/pipeline_run
+export CODE_ROOT=/home/user49/projects/def-sponsor00/user49/distributed-inference
+export APPTAINERENV_LD_LIBRARY_PATH=/usr/lib64:/usr/lib
+
+
+sbatch ${CODE_ROOT}/slurm/submit.sbatch
 ```
 
-## Development Skeleton
-- `src/inference.py` exposes the CLI entry point. Pass `--local_debug` to bypass DeepSpeed/NCCL setup and run a lightweight PyTorch-only flow that verifies I/O, batching, and logging.
-- `src/orchestrator.py` simulates distributed request handling with threads so you can refine orchestration logic before running under Slurm.
-- `src/utils.py` provides shared logging and performance tracking helpers (throughput, latency, CPU timings).
-- `results/` is where we store the system performance, feeding directly into the "performance and scaling analysis" section of the paper. It answers speed, effecienty and scalability
-- `eval/`is where we perform model quality evaluation. It answers model correctness, and if precision or sharding affect model quality
+Now that your job has been submitted, you can run the following to inspect / monitor it.
+
+```bash
+squeue -j <JOB-ID>
+
+scontrol show job <JOB-ID>
+```
+
+To open the logs:
+```bash
+# Follow logs
+tail -f /home/<YOUR-USER>/scratch/group1/hpc-runs/llama_pipeline-<JOB-ID>.out | ts
+# Or for error messages
+tail -f /home/<YOUR-USER>/scratch/group1/hpc-runs/llama_pipeline-<JOB-ID>.err | ts
+
+
+# Or just see all (doesnt update)
+cat /home/<YOUR-USER>/scratch/group1/hpc-runs/llama_pipeline-<JOB-ID>.out
+# Or for error messages
+cat /home/<YOUR-USER>/scratch/group1/hpc-runs/llama_pipeline-<JOB-ID>.err
+```
+
+Once the job has finished, pull the results back to your local workstation:
+```bash
+# First ensure ALL logs/info are outside the cluster (per-rank logs aren't binded); do this on the cluster
+cp -r /tmp/workspace/outputs ${SCRATCH_ROOT}/pipeline_run/outputs
+
+# Then locally:
+rsync -avz --progress \
+    <YOUR-USER>@hpcie.labs.faculty.ie.edu:${SCRATCH_ROOT}/pipeline_run/outputs \
+    ./outputs
+```
+
+
+## Execution Flow
+1) **Local step** — dry-run `python -m src.inference --local_debug` to verify configs/prompts and capture reference outputs.  
+2) **Cluster step** — Follow the above steps to upload the code and the model to the cluster (if needed) and run the batch job.
+3) **Result sync** — pull `${EXPERIMENT_ROOT}/outputs` (rank logs, completions, profiler traces if enabled) back to your local workstation.  
+4) **Post-process** — run the analysis notebook/script to compute metrics across the four experiments; include the local reference outputs when comparing correctness.
+
+## Experiments to Run
+- **Strong scaling** — fix total tokens/prompts, vary nodes/GPUs to measure speedup.  
+- **Weak scaling** — grow workload with resources so per-GPU load stays constant.  
+- **Sensitivity sweep** — sweep one parameter (batch size, preconditioner setting, or partitioning choice) to expose stability/efficiency trends.  
+- **Optimization** — apply one change that measurably improves time or throughput (e.g., caching, fused kernels, better partitioning) and rerun the baseline config.
+
+## Metrics Captured (each experiment)
+- Wall-clock time (job elapsed), throughput (tokens/sec or prompts/sec), and parallel efficiency.  
+- Resource use (GPU/CPU util + memory), I/O time, communication time, and preprocessing cost.  
+- Keep profiler outputs (`nsys`/`perf` if enabled), `sacct` accounting, and the per-rank logs for traceability.
+
+## Outputs
+- Structured metrics bundle per run (CSV/JSON) with the values above.  
+- Plots/tables comparing strong vs. weak scaling, the sensitivity curve, and the optimization delta.  
+- Notes on correctness deltas between local and cluster outputs (manual spot checks only).
+
+
+## Cluster File Structure
+
+![Cluster File Structure](docs/file-structure.png)
 
 
 ## Resources
-- **Hosting Updated:** https://fireworks.ai/
-  - https://app.fireworks.ai/models/fireworks/gpt-oss-20b
-  - https://app.fireworks.ai/models/fireworks/gpt-oss-120b
-- https://fireworks.ai/models/fireworks/llama-v2-13b-chat
-- or grok
+**Model:** [OpenLLaMA 3B v2](https://huggingface.co/openlm-research/open_llama_3b_v2)
 
-- **Model Choices:**
-  - https://huggingface.co/openai/gpt-oss-20b
-  - https://huggingface.co/openai/gpt-oss-120b
-  - https://huggingface.co/meta-llama/Llama-2-13b-chat
-  - or llama 3.1 7B, qwen 3 8B
-
-## Cluster Runtime Layout
-
-Professor guidance: keep code tiny in `/home`, persist important assets in `/project`, and put large/temporary runtime data in `/scratch`. On this cluster you have `/home/user49/projects` and `/scratch/user49`. The job should mount `/scratch/user49/pipeline_run` (shared, fast) into `/workspace` for all nodes; that is where configs, outputs, and the Hugging Face model cache live. Only `/slurm`, `env/appainter.sif`, and `run_distributed_inference.py` are staged; the model downloads at runtime into shared storage so all nodes reuse it.
-
-```
-Host layout (what exists before sbatch)
-/home/user49/projects/distributed-inference/   # code only (small)
-├── slurm/                                     # submit.sbatch, run.sh, etc.
-├── run_distributed_inference.py               # source copy
-└── env/appainter.sif                          # if small; otherwise place in /project/user49/appainter/appainter.sif
-
-/project/user49/appainter/                     # persistent, if available (preferred spot for the SIF)
-└── appainter.sif                              # built from env/appainter.def
-
-/scratch/user49/pipeline_run/                  # EXPERIMENT_ROOT (shared across nodes/ranks; mounted to /workspace)
-├── exp_config.json                            # you place here before sbatch
-├── ds_config.json                             # you place here before sbatch
-├── slurm/                                     # optional copy of run.sh if you launch via /workspace/slurm/run.sh
-├── outputs/                                   # created at runtime (shared)
-│   ├── rank_0.log
-│   ├── rank_1.log
-│   ├── completions_rank_0.jsonl
-│   ├── completions_rank_1.jsonl
-│   ├── sacct_<jobid>.txt                      # if sacct available (written by rank 1)
-│   ├── nsys_rank_<r>.*                        # if PROFILER=nsys
-│   └── perf_rank_<r>.txt                      # if PROFILER=perf
-└── hf_cache/                                  # Hugging Face cache; model+tokenizer download happens here once
-
-Inside any node (container view during the job)
-/app/
-├── run_distributed_inference.py               # baked into the SIF
-└── (optionally) run.sh                        # if you baked it; otherwise use the bind-mounted copy
-/workspace/                                    # bind-mounted from /scratch/user49/pipeline_run
-├── exp_config.json
-├── ds_config.json
-├── outputs/                                   # shared logs/results/profiles
-└── hf_cache/                                  # shared model/tokenizer cache (downloaded once, reused by all nodes)
-
-Per-node local (outside the mount, if any)
-/tmp/, /var/tmp/                               # not used by default; no model copies here unless you change HF cache
-```
-
-### Prof instructions
-How to use each filesystem
-/home – small, shared, for code only
-Use /home/<username> only for:
-
-Code and small repositories
-Job scripts (.sbatch)
-Config files, dotfiles
-Very small test data
-Do NOT keep here:
-
-Conda / virtualenv installations
-Large datasets
-Model checkpoints
-Large log / output files
-If you currently have large files or directories in /home, please move them to /project or /scratch as appropriate (see below).
-
-
-
-/project – persistent project data
-Use /project for data you want to keep:
-
-Datasets used by your assignments or projects
-Saved model checkpoints
-Important results and plots
-Shared course material per group
-Typical pattern:
-
- 
-/project/userXX/...
-*or per group*
-/project/groupA/...
- 
-Think of /project as your long-term storage on the cluster.
-
-
-
-/scratch – temporary, large, can be deleted
-Use /scratch for temporary, high-volume data, for example:
-
-Intermediate files created during jobs
-Large temporary outputs
-Anything that can be recomputed
-Example:
-
- 
-/scratch/userXX/run1/...
-You should assume /scratch may be cleaned up periodically. Do not rely on it for long-term storage.
-
-
-
-How to use it:
-
-Check your /home usage
-On a login node:
- 
-cd ~
-du -sh *
-If you see large folders (GBs), move them:
-Long-term data → /project/<username>/...
-Temporary / job scratch → /scratch/<username>/...
-For new work:
-Keep /home for code + small files only.
-Point your jobs to run in /project or /scratch, not /home.
-
-
-When /home fills up:
-
-Logins can fail.
-Jobs can crash or fail to start.
-The whole class is affected.
+**Docs:**
+-   [Apptainer 1.35](https://apptainer.org/docs/user/1.3/)
+-   [Pytorch 2.3.1](https://docs.pytorch.org/docs/2.3/)
+-   [CUDA 12.2.1](https://docs.nvidia.com/cuda/archive/12.2.1/)
+-   [DeepSpeed 0.14.4](https://deepspeed.readthedocs.io/en/stable/)
