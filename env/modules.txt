@@ -1,13 +1,8 @@
-# Load these modules on the login node before building/running:
-#
-# - apptainer/1.3.4           # container runtime + build support
-# - cuda/12.4.0               # matches the driver on the GPU nodes
-# - nsight-systems/2024.1.1   # CLI tracer used when PROFILER=nsys
-# - gcc/11.4.0                # toolchain for any native extensions
-# - pytorch (prebuilt)        # provided by /project/containers/pytorch-2.3.1-cuda11.8.sif
+# Load these modules on the login node before submitting:
+# Required
+apptainer              # container runtime used by slurm/submit.sbatch
+cuda                   # matches the GPU node driver; needed for nvidia-container-bindings
 
-apptainer/1.3.4
-cuda/12.4.0
-nsight-systems/2024.1.1
-gcc/11.4.0
-pytorch -> /project/containers/pytorch-2.3.1-cuda11.8.sif
+# Optional (enable only if you plan to profile inside the container)
+nsight-systems         # for PROFILER=nsys
+perf                   # for PROFILER=perf

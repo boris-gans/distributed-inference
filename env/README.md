@@ -1,1 +1,5 @@
-<!-- Environment setup guide covering Apptainer builds and module prerequisites for distributed DeepSeek inference. -->
+Environment assets for the application:
+
+- **environment.yml** — Conda spec for a local/dev environment that matches the runtime stack (PyTorch 2.3.1, DeepSpeed 0.14.4, Transformers 4.43.3, HF deps, tooling). Useful for dry-runs or debugging outside the cluster; the cluster job itself relies on the shared PyTorch Apptainer image plus the runtime pip installs in `slurm/run.sh`.
+- **modules.txt** — Minimal module loads on the login node. `apptainer` and `cuda` are required to run `sbatch`; `nsight-systems`/`perf` are optional if you plan to profile (guarded in `slurm/run.sh`).
+- **apptainer.def** — Optional recipe to build your own SIF if cluster storage allows or the shared PyTorch image disappears. Historically we relied on a shared `/home/user49/.../pytorch-2.3.1-cuda11.8.sif`; keep using that unless you need custom builds, since this recipe can produce large images and fail.

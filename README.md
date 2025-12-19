@@ -1,8 +1,30 @@
-# Distributed Inference (v2):
+# Distributed Inference
 
 ## Overview
 Many large language models are too large to fit on a single GPU, so even inference requires multi-GPU, multi-node execution.
-This project implements and benchmarks a POC, using a small 3B model and a distributed inference pipeline using **PyTorch** with **DeepSpeed Inference** (which uses **NCCL** for GPU communication). The model we choose was OpenLLaMA v2 3B (https://huggingface.co/openlm-research/open_llama_3b_v2), due to it's small size and permissive license
+This project implements and benchmarks a POC, using a small 3B model and a distributed inference pipeline using **PyTorch** with **DeepSpeed Inference** (which uses **NCCL** for GPU communication). The model we choose was [OpenLLaMA 3B v2](https://huggingface.co/openlm-research/open_llama_3b_v2), due to it's small size and permissive license. Detailed [report](docs/report-distributed-inference.pdf) available, as well as our video [presentation](https://www.youtube.com/watch?v=c8YseDJsAxE).
+
+### A note on the outcome
+Ultimately, the distributed inference component could not be made to run successfully on the cluster, despite multiple attempts and several architectural redesigns. The combination of:
+- single-GPU nodes (NVIDIA T4, 16 GB)
+- the absence of NVLink
+- aggressive offloading requirements due to limited storage
+- and limitations in the Hugging Face / PyTorch weight-loading paths
+
+Created a situation where the model partitions could not be reliably mapped to separate devices. These issues manifested as crashes during model construction (unassigned parameters, device-mapping failures, OOM errors, etc.), preventing the full pipeline from ever entering a runnable steady state.
+
+Even though the final distributed execution was not achieved, the project served as a valuable learning experience, helping to illuminate the practical challenges of multi-node inference on resource-limited HPC systems. The work done here forms a solid foundation for a future iteration on a more appropriate multi-GPU cluster.
+
+### Code Structure and Unused Components
+
+You will notice that the repository contains several modules and scripts that never execute on the cluster itself. This is intentional. The original design of the project envisioned a full end-to-end workflow, where:
+1. A job would be submitted remotely to Slurm
+2. The cluster would run the multi-GPU inference pipeline
+3. Results would be pulled back automatically
+4. Metrics, visualizations, and scaling plots would be computed locally
+5. Everything—from cluster run to graphs—would be reproducible from a single entry point.
+
+Because the distributed runtime never became functional on the cluster, this “post-processing” portion of the pipeline never reached the execution stage. However, the code remains in the repository because it represents the full intended workflow and they still reflect the general architecture of the project. They will be directly useful once a working distributed runtime exists.
 
 ## Objectives
 - Run OpenLLaMA v2 3B inference on 2 GPU nodes under **Slurm**.
@@ -19,11 +41,8 @@ This project implements and benchmarks a POC, using a small 3B model and a distr
 - **NCCL** — GPU–GPU communication backend  
 - **Slurm** — cluster scheduling  
 - **Apptainer** — containerization  
-- **Nsight / perf / sacct** — profiling and performance analysis (**not up to date**)
+- **sacct** — profiling and performance analysis
 
-## Model Hyperparameters
-
-**might be worth it to elaborate, but only the params that we change during our experiments**
 
 ## Cluster Configuration
 Our model will implement Pipeline Parallelism (PP) across nodes.
@@ -69,7 +88,7 @@ flowchart TB
 
 
 ## Quick Start
-### Local dev (ignore for now):
+### Local pipeline (ignore for now):
 ```bash
 git clone https://github.com/boris-gans/distributed-inference.git
 cd distributed-inference
@@ -96,7 +115,7 @@ hf download openlm-research/open_llama_3b --include="*" --local-dir models/
 
 rsync -av \
   slurm \
-  run_distributed_inference.py \
+  src/run_distributed_inference.py \
   <YOUR-USER>@hpcie.labs.faculty.ie.edu:/home/<YOUR-USER>/projects/def-sponsor00/<YOUR-USER>/distributed-inference
 
 # Note: this will take a while and is about 6GB. Do this once per group, not user
@@ -175,41 +194,14 @@ rsync -avz --progress \
 
 ## Cluster File Structure
 
-```
-Host prep (before sbatch)
-/home/<USER>/projects/def-sponsor00/<USER>/distributed-inference   # CODE_ROOT synced from laptop (slurm/, run_distributed_inference.py)
-/home/<USER>/scratch/group1/pipeline_run                          # SCRATCH_ROOT/PROJECT_ROOT/PIPELINE_ROOT (shared runtime data)
-├── exp_config.json                                               # copied from CODE_ROOT/slurm at submit time
-├── ds_config.json                                                # copied from CODE_ROOT/slurm at submit time
-├── prompts.jsonl                                                 # copied from CODE_ROOT/slurm at submit time
-└── outputs/                                                      # initially empty; Slurm stdout/err go to ${SCRATCH_ROOT}/hpc-runs
-/home/<USER>/scratch/group1/models/openllama-3b                   # model snapshot reused by all nodes
-/home/<USER>/projects/def-sponsor00/shared/images/pytorch-2.3.1-cuda11.8.sif  # APPAINTER_IMAGE (or ${SCRATCH_ROOT}/appainter/appainter.sif)
-
-Container view during the job (binds set in slurm/submit.sbatch)
-/app/                        -> ${CODE_ROOT} (run_distributed_inference.py, slurm/run.sh)
-/tmp/workspace/              -> ${SCRATCH_ROOT}/pipeline_run
-├── exp_config.json
-├── ds_config.json
-├── prompts.jsonl
-├── outputs/
-│   ├── rank_0.log, rank_1.log
-│   ├── completions_rank_0.jsonl, completions_rank_1.jsonl
-│   ├── sacct_<jobid>.txt (if sacct is available)
-│   ├── nsys_rank_<r>.* or perf_rank_<r>.txt (when PROFILER is set)
-│   └── other per-rank stdout from run.sh
-├── hf_cache/                # Hugging Face cache populated at runtime
-├── .venv/                   # runtime Python deps installed by slurm/run.sh
-├── .pip-cache/, .triton-cache/
-└── (any ad-hoc configs you add under ${PIPELINE_ROOT})
-/workspace/models/openllama-3b -> ${SCRATCH_ROOT}/models/openllama-3b
-```
+![Cluster File Structure](docs/file-structure.png)
 
 
 ## Resources
-**Model:** https://huggingface.co/openlm-research/open_llama_3b_v2
+**Model:** [OpenLLaMA 3B v2](https://huggingface.co/openlm-research/open_llama_3b_v2)
+
 **Docs:**
--   TO DO (apptainer)
--   TO DO (pytorch)
--   TO DO (deepspeed)
--   etc
+-   [Apptainer 1.35](https://apptainer.org/docs/user/1.3/)
+-   [Pytorch 2.3.1](https://docs.pytorch.org/docs/2.3/)
+-   [CUDA 12.2.1](https://docs.nvidia.com/cuda/archive/12.2.1/)
+-   [DeepSpeed 0.14.4](https://deepspeed.readthedocs.io/en/stable/)
