@@ -1,8 +1,6 @@
 .venv/
 .env
 
-*.pdf
-# *.jsonl
 local
 *.pyc
 *.parquet
@@ -13,8 +11,6 @@ local
 
 /__pycache__
 
-# notes.md
-# trash*
 results/local_debug.jsonl
 
 # MODEL INFO
@@ -23,6 +19,12 @@ models/openllama-7b/*.model
 models/openllama-7b/*.json
 models/openllama-7b/.gitattributes
 models/openllama-7b/.cache/
+
+models/openllama-3b/*.bin
+models/openllama-3b/*.model
+models/openllama-3b/*.json
+models/openllama-3b/.gitattributes
+models/openllama-3b/.cache/
 
 /docs/*.md
 /docs/*.txt
