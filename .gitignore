@@ -4,6 +4,9 @@
 local
 *.pyc
 *.parquet
+/.DS_Store
+models/.DS_Store
+
 
 /results/logs/*
 /results/plots/*
