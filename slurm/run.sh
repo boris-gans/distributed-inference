@@ -47,6 +47,9 @@ export NCCL_IB_DISABLE=0
 export NCCL_NET_GDR_LEVEL=2
 export NCCL_P2P_DISABLE=0
 
+# Debug - set pipeline size to 1 to force single node run (no dist)
+export PIPELINE_SIZE=1
+
 # Basic thread count for CPU-heavy sections.
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-4}"
 

@@ -1,15 +1,16 @@
 #!/usr/bin/env python
-"""Two-stage pipeline-parallel inference entrypoint for Slurm launches.
+"""Pipeline-parallel inference entrypoint for Slurm launches.
 
 This script is invoked by slurm/run.sh inside the container. It:
   - Initializes torch.distributed via DeepSpeed helpers
   - Downloads model/tokenizer to shared cache on /workspace/pipeline_run
-  - Splits the Llama model into two pipeline stages (one GPU per node)
+  - Runs single-rank greedy inference when pipeline size is 1
+  - Splits the Llama model into two pipeline stages (one GPU per stage) when pipeline size is 2
   - Streams hidden states between stages to generate text greedily
   - Emits per-prompt JSONL outputs and basic throughput metrics
 
 Notes:
-  - Designed for world_size == 2 (pipeline_parallel_size == 2).
+  - Supports pipeline_size of 1 (single GPU) or 2 (two-stage pipeline).
   - Uses BF16 and micro-batch size 1.
   - Assumes prompt JSONL lives on shared storage (EXPERIMENT_ROOT).
 """
@@ -134,6 +135,43 @@ def load_tokenizer(model_name: str, cache_dir: Path, logger: logging.Logger):
     tokenizer.padding_side = "left"
     logger.info("Loaded tokenizer for %s", model_name)
     return tokenizer
+
+
+def load_full_model(
+    model_name: str,
+    cache_dir: Path,
+    device: torch.device,
+    logger: logging.Logger,
+):
+    logger.info("Loading full model %s on %s...", model_name, device)
+
+    config = AutoConfig.from_pretrained(
+        model_name,
+        cache_dir=cache_dir,
+        local_files_only=True,
+    )
+    config.use_cache = False
+    config.pretraining_tp = 1
+    config._attn_implementation = "eager"
+
+    device_map = {"": str(device)} if device.type == "cuda" else None
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        config=config,
+        torch_dtype=torch.bfloat16,
+        cache_dir=cache_dir,
+        local_files_only=True,
+        low_cpu_mem_usage=True,
+        device_map=device_map,
+    )
+    if device_map is None:
+        model.to(device)
+
+    model.eval()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    logger.info("Loaded full model on %s", device)
+    return model
 
 
 def partition_model(
@@ -431,6 +469,75 @@ def generate_pipeline(
         writer.close()
 
 
+def generate_single(
+    model,
+    tokenizer,
+    prompts: List[str],
+    max_new_tokens: int,
+    eos_token_id: int,
+    device: torch.device,
+    rank: int,
+    use_nvtx: bool,
+    output_dir: Path,
+    logger: logging.Logger,
+) -> None:
+    """Single-rank greedy generation loop."""
+    output_path = output_dir / f"completions_rank_{rank}.jsonl"
+    start_all = time.time()
+
+    with output_path.open("w") as writer:
+        with torch.inference_mode():
+            for prompt_idx, prompt in enumerate(prompts):
+                inputs = tokenizer(prompt, return_tensors="pt", padding=False, truncation=True)
+                input_ids = inputs["input_ids"].to(device)
+
+                prompt_start = time.time()
+                generated = 0
+                for _ in range(max_new_tokens):
+                    attention_mask = torch.ones_like(input_ids, device=device)
+                    position_ids = torch.arange(input_ids.size(1), device=device, dtype=torch.long).unsqueeze(0)
+                    if use_nvtx and torch.cuda.is_available():
+                        torch.cuda.nvtx.range_push("single_forward")
+                    outputs = model(
+                        input_ids=input_ids,
+                        attention_mask=attention_mask,
+                        position_ids=position_ids,
+                        use_cache=False,
+                    )
+                    if use_nvtx and torch.cuda.is_available():
+                        torch.cuda.nvtx.range_pop()
+                    logits = outputs.logits
+                    next_token = logits[:, -1, :].argmax(dim=-1)
+                    input_ids = torch.cat([input_ids, next_token.view(1, 1)], dim=1)
+                    generated += 1
+
+                    if int(next_token.item()) == eos_token_id:
+                        break
+
+                elapsed = time.time() - prompt_start
+                text = tokenizer.decode(input_ids[0], skip_special_tokens=True)
+                record = {
+                    "prompt_index": prompt_idx,
+                    "prompt": prompt,
+                    "completion": text,
+                    "tokens_generated": generated,
+                    "latency_s": elapsed,
+                    "throughput_tok_s": generated / max(elapsed, 1e-6),
+                }
+                writer.write(json.dumps(record) + "\n")
+                writer.flush()
+                logger.info(
+                    "Prompt %d done: %d tokens in %.2fs (%.2f tok/s)",
+                    prompt_idx,
+                    generated,
+                    elapsed,
+                    record["throughput_tok_s"],
+                )
+
+    total_elapsed = time.time() - start_all
+    logger.info("Completed %d prompts in %.2fs", len(prompts), total_elapsed)
+
+
 def main() -> None:
     args = parse_args()
 
@@ -470,59 +577,100 @@ def main() -> None:
         or int(ds_cfg.get("distributed_training", {}).get("pipeline_parallel_size", 0))
         or world_size
     )
-    if world_size != pipeline_size:
+    if pipeline_size not in (1, 2):
+        raise SystemExit(f"pipeline_size={pipeline_size} is not supported; use 1 or 2.")
+    if pipeline_size > world_size:
         logger.warning(
-            "world_size (%d) != pipeline_parallel_size (%d); proceeding anyway.",
-            world_size,
+            "pipeline_size (%d) > world_size (%d); forcing pipeline_size=%d.",
             pipeline_size,
+            world_size,
+            world_size,
+        )
+        pipeline_size = world_size
+    if pipeline_size == 1 and world_size > 1:
+        logger.warning(
+            "pipeline_size=1 but world_size=%d; only rank 0 will run prompts.",
+            world_size,
+        )
+    if pipeline_size == 2 and world_size > 2:
+        logger.warning(
+            "world_size (%d) > pipeline_size (2); ranks >=2 will idle.",
+            world_size,
         )
 
-    prompts = read_prompts(exp_cfg.prompt_path)
-    if prompt_limit is not None:
-        prompts = prompts[:prompt_limit]
-        logger.info("Applying prompt limit: %d prompts", len(prompts))
-    if exp_cfg.batch_size > 1:
-        logger.info(
-            "Batch size override set to %d; prompts will be processed sequentially per item.",
-            exp_cfg.batch_size,
-        )
+    active_rank = rank < pipeline_size
 
-    cache_dir = Path(os.environ["HF_HOME"])
-    # If model_path is provided, use it; otherwise fall back to model_name (HF hub)
-    model_ref = str(exp_cfg.model_path) if exp_cfg.model_path else exp_cfg.model_name
-    tokenizer = load_tokenizer(model_ref, cache_dir, logger)
+    if active_rank:
+        prompts = read_prompts(exp_cfg.prompt_path)
+        if prompt_limit is not None:
+            prompts = prompts[:prompt_limit]
+            logger.info("Applying prompt limit: %d prompts", len(prompts))
+        if exp_cfg.batch_size > 1:
+            logger.info(
+                "Batch size override set to %d; prompts will be processed sequentially per item.",
+                exp_cfg.batch_size,
+            )
 
-    config = AutoConfig.from_pretrained(model_ref, cache_dir=cache_dir, local_files_only=True)
-    split_idx = max(1, config.num_hidden_layers // pipeline_size) if pipeline_size > 1 else config.num_hidden_layers
+        cache_dir = Path(os.environ["HF_HOME"])
+        # If model_path is provided, use it; otherwise fall back to model_name (HF hub)
+        model_ref = str(exp_cfg.model_path) if exp_cfg.model_path else exp_cfg.model_name
+        tokenizer = load_tokenizer(model_ref, cache_dir, logger)
 
-    stage_module, hidden_size = partition_model(
-        model_name=model_ref,
-        cache_dir=cache_dir,
-        split_idx=split_idx,
-        device=device,
-        stage=rank,
-        logger=logger,
-    )
-
-    dist.barrier()
-    logger.info("Starting pipeline generation for %d prompts", len(prompts))
-
-    generate_pipeline(
-        stage_module=stage_module,
-        tokenizer=tokenizer,
-        prompts=prompts,
-        max_new_tokens=exp_cfg.max_new_tokens,
-        eos_token_id=tokenizer.eos_token_id,
-        hidden_size=hidden_size,
-        device=device,
-        rank=rank,
-        use_nvtx=use_nvtx,
-        output_dir=output_dir,
-        logger=logger,
-    )
+        if pipeline_size == 1:
+            model = load_full_model(
+                model_name=model_ref,
+                cache_dir=cache_dir,
+                device=device,
+                logger=logger,
+            )
+        else:
+            config = AutoConfig.from_pretrained(model_ref, cache_dir=cache_dir, local_files_only=True)
+            split_idx = max(1, config.num_hidden_layers // pipeline_size)
+            stage_module, hidden_size = partition_model(
+                model_name=model_ref,
+                cache_dir=cache_dir,
+                split_idx=split_idx,
+                device=device,
+                stage=rank,
+                logger=logger,
+            )
+    else:
+        logger.info("Rank %d idle; pipeline_size=%d, world_size=%d", rank, pipeline_size, world_size)
 
     dist.barrier()
-    if rank == 1:
+    if active_rank:
+        if pipeline_size == 1:
+            logger.info("Starting single-rank generation for %d prompts", len(prompts))
+            generate_single(
+                model=model,
+                tokenizer=tokenizer,
+                prompts=prompts,
+                max_new_tokens=exp_cfg.max_new_tokens,
+                eos_token_id=tokenizer.eos_token_id,
+                device=device,
+                rank=rank,
+                use_nvtx=use_nvtx,
+                output_dir=output_dir,
+                logger=logger,
+            )
+        else:
+            logger.info("Starting pipeline generation for %d prompts", len(prompts))
+            generate_pipeline(
+                stage_module=stage_module,
+                tokenizer=tokenizer,
+                prompts=prompts,
+                max_new_tokens=exp_cfg.max_new_tokens,
+                eos_token_id=tokenizer.eos_token_id,
+                hidden_size=hidden_size,
+                device=device,
+                rank=rank,
+                use_nvtx=use_nvtx,
+                output_dir=output_dir,
+                logger=logger,
+            )
+
+    dist.barrier()
+    if active_rank and rank == (pipeline_size - 1):
         maybe_log_sacct(logger, output_dir)
     dist.barrier()
 

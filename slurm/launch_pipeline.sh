@@ -24,31 +24,6 @@ if [[ ! -f "${APPAINTER_IMAGE}" ]]; then
   exit 1
 fi
 
-# Create minimal placeholder configs if they don't already exist.
-if [[ ! -f "${EXP_CONFIG_PATH}" ]]; then
-  cat > "${EXP_CONFIG_PATH}" <<'EOF'
-{
-  "model_name": "meta-llama/Meta-Llama-3.1-8B-Instruct",
-  "prompt_path": "/workspace/prompts.jsonl",
-  "max_new_tokens": 64,
-  "temperature": 0.0,
-  "seed": 42
-}
-EOF
-  echo "Wrote placeholder exp_config.json to ${EXP_CONFIG_PATH}"
-fi
-
-if [[ ! -f "${DS_CONFIG_PATH}" ]]; then
-  cat > "${DS_CONFIG_PATH}" <<'EOF'
-{
-  "train_batch_size": 4,
-  "pipeline_parallel_size": 2,
-  "tensor_parallel_size": 2
-}
-EOF
-  echo "Wrote placeholder ds_config.json to ${DS_CONFIG_PATH}"
-fi
-
 if ! command -v sbatch >/dev/null 2>&1; then
   echo "sbatch is not available. Run this on your Slurm login node." >&2
   exit 1

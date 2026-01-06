@@ -109,7 +109,7 @@ APPTAINER_OPTS=(
     --nv
     --bind "${PROJECT_ROOT}:${EXPERIMENT_ROOT}"
     --bind "${CODE_ROOT}:/app"
-    --bind "/home/${USER}/scratch/group1/models/openllama-3b:/workspace/models/openllama-3b"
+    --bind "/home/${USER}/scratch/group1/models/opt-125b:/workspace/models/opt-125b"
     --pwd /app
 )
 

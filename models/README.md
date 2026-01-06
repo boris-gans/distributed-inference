@@ -5,3 +5,6 @@ hf download openlm-research/open_llama_3b_v2 --include="*" --local-dir ~/[path-t
 ```
 
 *Note: you must authenticate your device with HF first*
+
+
+New option: https://huggingface.co/facebook/opt-125m
