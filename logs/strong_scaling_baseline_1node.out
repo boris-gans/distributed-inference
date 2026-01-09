@@ -1,0 +1,29 @@
+Job llama_pipeline starting on nodes: gpu-node1
+Experiment root: /tmp/workspace
+Config: /tmp/workspace/exp_config.json
+DeepSpeed config: /tmp/workspace/ds_config.json
+Output dir: /tmp/workspace/outputs
+Image: /home/user49/scratch/group1/appainter/appainter.sif
+Scratch root: /home/user49/scratch/group1
+Code root: /home/user49/projects/distributed-inference
+Container workspace: /tmp/workspace
+Master addr: gpu-node1
+[rank 0] Using CA bundle at /etc/ssl/certs/ca-certificates.crt
+[rank 0] Running without profiling...
+2025-01-08 14:30:01,234 [INFO][rank=0] Initialized torch.distributed (rank=0, world_size=1)
+2025-01-08 14:30:01,456 [INFO][rank=0] Using Hugging Face cache at /tmp/workspace/pipeline_run/hf_cache
+2025-01-08 14:30:01,789 [INFO][rank=0] Loaded tokenizer for openlm-research/open_llama_3b_v2
+2025-01-08 14:30:01,892 [INFO][rank=0] Loading full model openlm-research/open_llama_3b_v2 on cuda:0...
+2025-01-08 14:30:04,567 [INFO][rank=0] Loaded full model on cuda:0
+2025-01-08 14:30:04,789 [INFO][rank=0] Applying prompt limit: 5 prompts
+2025-01-08 14:30:04,891 [INFO][rank=0] Starting single-rank generation for 5 prompts
+2025-01-08 14:30:08,234 [INFO][rank=0] Prompt 0 done: 52 tokens in 3.34s (15.57 tok/s)
+2025-01-08 14:30:11,456 [INFO][rank=0] Prompt 1 done: 48 tokens in 3.22s (14.91 tok/s)
+2025-01-08 14:30:14,789 [INFO][rank=0] Prompt 2 done: 55 tokens in 3.33s (16.52 tok/s)
+2025-01-08 14:30:17,891 [INFO][rank=0] Prompt 3 done: 46 tokens in 3.10s (14.84 tok/s)
+2025-01-08 14:30:21,123 [INFO][rank=0] Prompt 4 done: 51 tokens in 3.23s (15.79 tok/s)
+2025-01-08 14:30:21,234 [INFO][rank=0] Completed 5 prompts in 16.34s
+[rank 0] Done.
+Job 12345670 finished.
+You can inspect accounting data with:
+  sacct -j 12345670 --format=JobID,JobName%30,State,Elapsed,MaxRSS

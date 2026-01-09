@@ -6,8 +6,8 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --time=00:30:00
 #SBATCH --partition=gpu-node
-#SBATCH --output=/home/%u/scratch/group1/hpc-runs/%x-%j.out
-#SBATCH --error=/home/%u/scratch/group1/hpc-runs/%x-%j.err
+#SBATCH --output=/home/%u/scratch/group1/hpc-runs/batch_sweep_batch4.out
+#SBATCH --error=/home/%u/scratch/group1/hpc-runs/batch_sweep_batch4.err
 # Update the paths above if you change SCRATCH_ROOT.
 
 # Single pipeline-parallel launch with fixed config paths.
@@ -16,6 +16,11 @@
 module --force purge 
 module load apptainer
 module load cuda
+
+# debug
+module list
+which apptainer
+nvidia smi
 
 set -euo pipefail
 

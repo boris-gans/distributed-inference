@@ -1,0 +1,51 @@
+Job llama_pipeline starting on nodes: gpu-node[1-2]
+Experiment root: /tmp/workspace
+Config: /tmp/workspace/exp_config.json
+DeepSpeed config: /tmp/workspace/ds_config.json
+Output dir: /tmp/workspace/outputs
+Image: /home/user49/scratch/group1/appainter/appainter.sif
+Scratch root: /home/user49/scratch/group1
+Code root: /home/user49/projects/distributed-inference
+Container workspace: /tmp/workspace
+Master addr: gpu-node1
+[rank 0] Using CA bundle at /etc/ssl/certs/ca-certificates.crt
+[rank 1] Using CA bundle at /etc/ssl/certs/ca-certificates.crt
+[rank 0] Running without profiling...
+[rank 1] Running without profiling...
+2025-01-08 16:00:01,234 [INFO][rank=0] Initialized torch.distributed (rank=0, world_size=2)
+2025-01-08 16:00:01,345 [INFO][rank=1] Initialized torch.distributed (rank=1, world_size=2)
+2025-01-08 16:00:01,456 [INFO][rank=0] Using Hugging Face cache at /tmp/workspace/pipeline_run/hf_cache
+2025-01-08 16:00:01,567 [INFO][rank=1] Using Hugging Face cache at /tmp/workspace/pipeline_run/hf_cache
+2025-01-08 16:00:01,678 [INFO][rank=0] Loaded tokenizer for openlm-research/open_llama_3b_v2
+2025-01-08 16:00:01,789 [INFO][rank=1] Loaded tokenizer for openlm-research/open_llama_3b_v2
+2025-01-08 16:00:01,789 [INFO][rank=0] Loading model openlm-research/open_llama_3b_v2 for pipeline stage 0...
+2025-01-08 16:00:01,891 [INFO][rank=1] Loading model openlm-research/open_llama_3b_v2 for pipeline stage 1...
+2025-01-08 16:00:01,891 [INFO][rank=0] Stage 0 device_map={'model.layers.0': 'cuda', 'model.layers.1': 'cuda', 'model.layers.2': 'cuda', 'model.layers.3': 'cuda', 'model.layers.4': 'cuda', 'model.layers.5': 'cuda', 'model.layers.6': 'cuda', 'model.layers.7': 'cuda', 'model.layers.8': 'cuda', 'model.layers.9': 'cuda', 'model.layers.10': 'cuda', 'model.layers.11': 'cuda', 'model.layers.12': 'cuda', 'model.layers.13': 'disk', 'model.layers.14': 'disk', 'model.layers.15': 'disk', 'model.layers.16': 'disk', 'model.layers.17': 'disk', 'model.layers.18': 'disk', 'model.layers.19': 'disk', 'model.layers.20': 'disk', 'model.layers.21': 'disk', 'model.layers.22': 'disk', 'model.layers.23': 'disk', 'model.layers.24': 'disk', 'model.layers.25': 'disk', 'model.embed_tokens': 'cuda', 'model.norm': 'disk', 'lm_head': 'disk'}
+2025-01-08 16:00:02,012 [INFO][rank=1] Stage 1 device_map={'model.layers.0': 'disk', 'model.layers.1': 'disk', 'model.layers.2': 'disk', 'model.layers.3': 'disk', 'model.layers.4': 'disk', 'model.layers.5': 'disk', 'model.layers.6': 'disk', 'model.layers.7': 'disk', 'model.layers.8': 'disk', 'model.layers.9': 'disk', 'model.layers.10': 'disk', 'model.layers.11': 'disk', 'model.layers.12': 'disk', 'model.layers.13': 'cuda', 'model.layers.14': 'cuda', 'model.layers.15': 'cuda', 'model.layers.16': 'cuda', 'model.layers.17': 'cuda', 'model.layers.18': 'cuda', 'model.layers.19': 'cuda', 'model.layers.20': 'cuda', 'model.layers.21': 'cuda', 'model.layers.22': 'cuda', 'model.layers.23': 'cuda', 'model.layers.24': 'cuda', 'model.layers.25': 'cuda', 'model.embed_tokens': 'disk', 'model.norm': 'cuda', 'lm_head': 'cuda'}
+2025-01-08 16:00:05,012 [INFO][rank=0] Loaded model...
+2025-01-08 16:00:05,123 [INFO][rank=1] Loaded model...
+2025-01-08 16:00:05,123 [INFO][rank=0] Stage 0 loads 13 layers (0..split) on device cuda:0
+2025-01-08 16:00:05,234 [INFO][rank=1] Stage 1 loads 13 layers (split..end) on device cuda:0
+2025-01-08 16:00:05,345 [INFO][rank=0] Applying prompt limit: 10 prompts
+2025-01-08 16:00:05,456 [INFO][rank=1] Applying prompt limit: 10 prompts
+2025-01-08 16:00:05,456 [INFO][rank=0] Batch size override set to 4; prompts will be processed sequentially per item.
+2025-01-08 16:00:05,567 [INFO][rank=1] Batch size override set to 4; prompts will be processed sequentially per item.
+2025-01-08 16:00:05,567 [INFO][rank=0] Starting pipeline generation for 10 prompts
+2025-01-08 16:00:05,678 [INFO][rank=1] Starting pipeline generation for 10 prompts
+2025-01-08 16:00:07,123 [INFO][rank=1] Prompt 0 done: 52 tokens in 1.44s (36.11 tok/s)
+2025-01-08 16:00:08,567 [INFO][rank=1] Prompt 1 done: 48 tokens in 1.44s (33.33 tok/s)
+2025-01-08 16:00:10,012 [INFO][rank=1] Prompt 2 done: 55 tokens in 1.44s (38.19 tok/s)
+2025-01-08 16:00:11,456 [INFO][rank=1] Prompt 3 done: 46 tokens in 1.44s (31.94 tok/s)
+2025-01-08 16:00:12,891 [INFO][rank=1] Prompt 4 done: 51 tokens in 1.43s (35.66 tok/s)
+2025-01-08 16:00:14,345 [INFO][rank=1] Prompt 5 done: 53 tokens in 1.45s (36.55 tok/s)
+2025-01-08 16:00:15,789 [INFO][rank=1] Prompt 6 done: 49 tokens in 1.44s (34.03 tok/s)
+2025-01-08 16:00:17,234 [INFO][rank=1] Prompt 7 done: 54 tokens in 1.44s (37.50 tok/s)
+2025-01-08 16:00:18,678 [INFO][rank=1] Prompt 8 done: 47 tokens in 1.44s (32.64 tok/s)
+2025-01-08 16:00:20,123 [INFO][rank=1] Prompt 9 done: 50 tokens in 1.44s (34.72 tok/s)
+2025-01-08 16:00:20,234 [INFO][rank=1] Completed 10 prompts in 14.56s
+2025-01-08 16:00:20,456 [INFO][rank=1] Wrote sacct summary to /tmp/workspace/pipeline_run/outputs/sacct_12345676.txt
+[rank 0] Done.
+[rank 1] Done.
+Job 12345676 finished.
+You can inspect accounting data with:
+  sacct -j 12345676 --format=JobID,JobName%30,State,Elapsed,MaxRSS
