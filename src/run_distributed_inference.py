@@ -106,6 +106,21 @@ def init_logging(output_dir: Path, rank: int) -> logging.Logger:
 
 
 def init_distributed() -> int:
+    """Initialize torch.distributed with NCCL (GPU) or gloo (CPU) backend.
+
+    Requires MASTER_ADDR, MASTER_PORT, RANK, and WORLD_SIZE env vars.
+    If CUDA is unavailable, check that Apptainer was launched with --nv flag
+    and APPTAINERENV_LD_LIBRARY_PATH includes host driver paths.
+    """
+    if not torch.cuda.is_available():
+        # This typically means the container lacks access to host NVIDIA drivers.
+        # Common fix: ensure --nv flag is passed to apptainer exec and
+        # APPTAINERENV_LD_LIBRARY_PATH=/usr/lib64:/usr/lib is set.
+        print(
+            "WARNING: CUDA not available. If running in a container, ensure "
+            "--nv flag is passed to Apptainer and LD_LIBRARY_PATH is set.",
+            flush=True,
+        )
     backend = "nccl" if torch.cuda.is_available() else "gloo"
     dist.init_process_group(backend=backend, init_method="env://")
     if not dist.is_initialized():
@@ -123,12 +138,21 @@ def set_hf_cache(root: Path, logger: logging.Logger) -> None:
 
 
 def load_tokenizer(model_name: str, cache_dir: Path, logger: logging.Logger):
-    tokenizer = AutoTokenizer.from_pretrained(
-        model_name,
-        cache_dir=cache_dir,
-        use_fast=False,
-        local_files_only=True,
-    )
+    # local_files_only=True is required because compute nodes lack network access
+    # to Hugging Face. Model must be pre-staged on shared filesystem.
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(
+            model_name,
+            cache_dir=cache_dir,
+            use_fast=False,
+            local_files_only=True,
+        )
+    except OSError as exc:
+        raise SystemExit(
+            f"Failed to load tokenizer from '{model_name}'. Ensure model is pre-staged "
+            f"on the cluster filesystem (compute nodes cannot download from HF). "
+            f"Original error: {exc}"
+        ) from exc
     # Ensure pad token exists for attention masks
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -143,13 +167,21 @@ def load_full_model(
     device: torch.device,
     logger: logging.Logger,
 ):
+    """Load full model on a single GPU (pipeline_size=1 mode)."""
     logger.info("Loading full model %s on %s...", model_name, device)
 
-    config = AutoConfig.from_pretrained(
-        model_name,
-        cache_dir=cache_dir,
-        local_files_only=True,
-    )
+    # local_files_only=True required - compute nodes have no HF network access
+    try:
+        config = AutoConfig.from_pretrained(
+            model_name,
+            cache_dir=cache_dir,
+            local_files_only=True,
+        )
+    except OSError as exc:
+        raise SystemExit(
+            f"Failed to load model config from '{model_name}'. Ensure model is "
+            f"pre-staged on the cluster. Original error: {exc}"
+        ) from exc
     config.use_cache = False
     config.pretraining_tp = 1
     config._attn_implementation = "eager"
@@ -182,15 +214,33 @@ def partition_model(
     stage: int,
     logger: logging.Logger,
 ) -> tuple[nn.Module, int]:
+    """Partition model across pipeline stages for distributed inference.
 
+    This function constructs a complete device_map that explicitly assigns every
+    model component to either the local GPU or disk offload. This is required to
+    avoid 'ValueError: X.weight doesn't have any device set' errors that occur
+    when from_pretrained receives an incomplete device mapping.
+
+    Stage 0: embedding layer + first half of transformer layers
+    Stage 1: second half of layers + final norm + lm_head
+
+    Hidden states are streamed between stages via torch.distributed.send/recv.
+    """
     logger.info("Loading model %s for pipeline stage %d...", model_name, stage)
 
     # STEP 1 — Load config only (safe, tiny memory)
-    config = AutoConfig.from_pretrained(
-        model_name,
-        cache_dir=cache_dir,
-        local_files_only=True,
-    )
+    # local_files_only=True required - compute nodes have no HF network access
+    try:
+        config = AutoConfig.from_pretrained(
+            model_name,
+            cache_dir=cache_dir,
+            local_files_only=True,
+        )
+    except OSError as exc:
+        raise SystemExit(
+            f"Failed to load model config from '{model_name}'. Ensure model is "
+            f"pre-staged on the cluster. Original error: {exc}"
+        ) from exc
     num_layers = config.num_hidden_layers
     hidden_size = config.hidden_size
     config.use_cache = False
@@ -199,7 +249,9 @@ def partition_model(
 
     split = split_idx or (num_layers // 2)
 
-    # STEP 2 — Build minimal device_map so this rank loads only its layers
+    # STEP 2 — Build COMPLETE device_map so from_pretrained knows where every param goes.
+    # Critical: every layer must be assigned to either GPU or "disk" to avoid
+    # "ValueError: X.weight doesn't have any device set" errors.
     if stage == 0:
         # Layers 0 ... split-1 live on this GPU
         layer_ids = list(range(0, split))
@@ -213,7 +265,7 @@ def partition_model(
         if i in layer_ids:
             device_map[f"model.layers.{i}"] = device.type  # cuda
         else:
-            device_map[f"model.layers.{i}"] = "disk"       # throwaway layers; other node loads these but must specify
+            device_map[f"model.layers.{i}"] = "disk"       # offloaded; other rank owns these
 
     if stage == 0:
         device_map["model.embed_tokens"] = device.type
@@ -613,7 +665,13 @@ def main() -> None:
 
         cache_dir = Path(os.environ["HF_HOME"])
         # If model_path is provided, use it; otherwise fall back to model_name (HF hub)
+        # Using local paths is strongly recommended since compute nodes lack HF access.
         model_ref = str(exp_cfg.model_path) if exp_cfg.model_path else exp_cfg.model_name
+        if exp_cfg.model_path and not exp_cfg.model_path.exists():
+            raise SystemExit(
+                f"Model path '{exp_cfg.model_path}' does not exist. Ensure the model "
+                f"is pre-staged and the path is correctly bound into the container."
+            )
         tokenizer = load_tokenizer(model_ref, cache_dir, logger)
 
         if pipeline_size == 1:

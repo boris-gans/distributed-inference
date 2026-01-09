@@ -20,7 +20,7 @@ module load cuda
 # debug
 module list
 which apptainer
-nvidia smi
+nvidia-smi || echo "nvidia-smi not available on login node (expected)"
 
 set -euo pipefail
 
@@ -69,7 +69,10 @@ export SCRATCH_ROOT
 export EXP_CONFIG_PATH="${EXP_CONFIG_PATH:-${EXPERIMENT_ROOT}/exp_config.json}"
 export DS_CONFIG_PATH="${DS_CONFIG_PATH:-${EXPERIMENT_ROOT}/ds_config.json}"
 export OUTPUT_DIR="${OUTPUT_DIR:-${EXPERIMENT_ROOT}/outputs}"
-export APPTAINERENV_LD_LIBRARY_PATH="/usr/lib64:/usr/lib"
+# Ensure container can access host NVIDIA drivers and CUDA runtime libraries.
+# This is critical - without proper LD_LIBRARY_PATH, CUDA initialization fails with:
+#   RuntimeError: Found no NVIDIA driver on your system.
+export APPTAINERENV_LD_LIBRARY_PATH="/usr/lib64:/usr/lib:${LD_LIBRARY_PATH:-}"
 
 mkdir -p "${OUTPUT_DIR}"
 mkdir -p "${SCRATCH_ROOT}/hpc-runs"
@@ -110,11 +113,21 @@ echo "Master addr: ${MASTER_ADDR}"
 # Each task runs a separate Apptainer container, calling /app/slurm/run.sh inside.
 # All tasks see the same /workspace (mounted from PROJECT_ROOT).
 
+# Model path on host filesystem - must be pre-downloaded since compute nodes lack
+# network access to Hugging Face. Override via MODEL_HOST_PATH if needed.
+MODEL_HOST_PATH="${MODEL_HOST_PATH:-/home/${USER}/scratch/group1/models/opt-125b}"
+MODEL_CONTAINER_PATH="${MODEL_CONTAINER_PATH:-/workspace/models/opt-125b}"
+
+if [[ ! -d "${MODEL_HOST_PATH}" ]]; then
+  echo "WARNING: Model directory ${MODEL_HOST_PATH} not found. Ensure model is pre-staged." >&2
+  echo "Download the model locally and transfer to the cluster before running." >&2
+fi
+
 APPTAINER_OPTS=(
-    --nv
+    --nv  # Critical: exposes host NVIDIA drivers to container
     --bind "${PROJECT_ROOT}:${EXPERIMENT_ROOT}"
     --bind "${CODE_ROOT}:/app"
-    --bind "/home/${USER}/scratch/group1/models/opt-125b:/workspace/models/opt-125b"
+    --bind "${MODEL_HOST_PATH}:${MODEL_CONTAINER_PATH}"
     --pwd /app
 )
 

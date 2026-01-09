@@ -1,52 +1,18 @@
-# .err:
+Limitations and Challenges
+A number of practical and system-level constraints influenced the design, execution, and observability of the experiments. The cluster's hardware layout presented a primary limitation: each compute node contains a single NVIDIA T4 GPU with 16 GB of device memory. This restricted experimentation to comparatively small models and a two-stage pipeline configuration, without the option to employ tensor or data parallelism. Model execution therefore relied on selective GPU residency, with only the active transformer layers loaded onto the device and the remainder offloaded to host memory. While this approach conserved GPU resources, it increased pressure on system RAM and occasionally resulted in CPU-side out-of-memory failures. To address this, the `partition_model()` function in `run_distributed_inference.py` was implemented with an explicit `device_map` that assigns each transformer layer to either the local GPU or a disk-based offload folder. Combined with `low_cpu_mem_usage=True` and `torch.bfloat16` precision, this approach ensures that each node loads only the layers it needs, avoiding CPU memory spikes. Additionally, support for single-GPU execution (`pipeline_size=1`) was added to enable debugging and baseline measurements on a single node.
 
-Lmod has detected the following error: These module(s) or extension(s) exist
-but cannot be loaded as requested: "apptainer"
-   Try: "module spider apptainer" to see how to load the module(s).
+Significant difficulties were also encountered when acquiring and downloading the model onto the cluster. Direct downloads from Hugging Face repeatedly failed due to missing system libraries, blocked network access, and authentication restrictions on the compute nodes. As a workaround, the model was downloaded on a local machine and then transferred to the cluster's filesystem. Given the model size (approximately 7 GB), both the local download and the subsequent file transfer took about thirty minutes each. This introduced delays in experimentation as we switched models (from a 7B model to 3B) and highlighted the practical limitations of relying on remote model hosting in a constrained HPC environment. To resolve this, the inference code was modified to use `local_files_only=True` for all model and tokenizer loading operations, and the experiment configuration (`exp_config.json`) was updated to reference pre-staged model weights via a `model_path` field (e.g., `/workspace/models/opt-125b`). The Slurm batch script mounts this pre-downloaded model directory into the container using Apptainer's `--bind` option, eliminating any runtime dependency on external network access.
 
+As mentioned earlier, attempts to incorporate hardware-level profiling tools encountered systemic barriers. Nsight Systems, Nsight Compute, and related PerfWorks components could not be installed on compute nodes: NVIDIA's previously available .run and .deb installer packages have been removed from public repositories, resulting in reproducible 404 Not Found errors across all tested versions. The CUDA-toolkit modules present on the cluster do not include nsys, and the node operating system lacks key libraries (such as libdw and libunwind) and tracing permissions required for kernel-level profiling. As a result, external profilers could not be deployed, and instrumentation was limited to application-level timing, throughput measurements, NCCL diagnostics, and environment logging. To work around this limitation, the inference script implements comprehensive application-level instrumentation: per-prompt latency and throughput metrics are recorded in JSONL output files, NVTX range markers are conditionally enabled when a profiler is detected, and a `maybe_log_sacct()` function captures Slurm accounting data for post-hoc resource analysis. The `run.sh` launcher script gracefully falls back to normal execution when profiling tools are unavailable, logging a warning rather than failing.
 
+Containerization and environment management also imposed important constraints. A fully self-contained Apptainer image was avoided due to size and quota limitations, so the workflow instead relies on a minimal PyTorch base image with runtime dependency installation. This approach required careful orchestration of Python environment bootstrapping, dependency caching, and network-aware pip configuration, as outbound connectivity on compute nodes is restricted. Early container executions revealed that the image lacked access to the host's NVIDIA driver stack: although distributed initialization completed successfully, both ranks failed during CUDA setup. The logs show that immediately after initializing torch.distributed and configuring local Hugging Face caches, the CUDA backend could not be activated, resulting in the following runtime exception emitted by both ranks:
+RuntimeError: Found no NVIDIA driver on your system. Please check that you have an NVIDIA GPU and installed a driver from http://www.nvidia.com/Download/index.aspx
+These failures were ultimately traced to missing driver bindings and incomplete library paths inside the container. To fix this, the `submit.sbatch` script was updated to pass the `--nv` flag to Apptainer, which exposes the host's NVIDIA drivers and CUDA runtime to the container. Additionally, `APPTAINERENV_LD_LIBRARY_PATH` is explicitly set to `/usr/lib64:/usr/lib` to ensure the container can locate shared libraries, and the script loads the `cuda` module before execution. The `run.sh` entrypoint also removes any pip-installed torch or CUDA wheels from the local site-packages to ensure the container's pre-built CUDA-compatible PyTorch is always used.
 
-Lmod has detected the following error: These module(s) or extension(s) exist
-but cannot be loaded as requested: "cuda"
-   Try: "module spider cuda" to see how to load the module(s).
-
-
-
-srun: error: gpu-node1: task 0: Exited with exit code 1
-/app/slurm/run.sh: line 197: 2985003 Aborted                 (core dumped) "${BASE_CMD[@]}" 2>&1
-     2985004 Done                    | tee -a "${RANK_LOG}"
-srun: error: gpu-node2: task 1: Exited with exit code 134
-
-
-# .out:
-
-gpu-node2:2985003:2985024 [0] misc/socket.cc:50 NCCL WARN socketProgress: Connection closed by remote peer gpu-node1.int.hpcie.labs.faculty.ie.edu<45074>
-gpu-node2:2985003:2985024 [0] NCCL INFO misc/socket.cc:752 -> 6
-gpu-node2:2985003:2985024 [0] NCCL INFO transport/net_socket.cc:474 -> 6
-gpu-node2:2985003:2985024 [0] NCCL INFO transport/net.cc:1298 -> 6
-gpu-node2:2985003:2985024 [0] NCCL INFO proxy.cc:694 -> 6
-gpu-node2:2985003:2985024 [0] NCCL INFO proxy.cc:874 -> 6 [Progress Thread]
-
-gpu-node2:2985003:2985024 [0] misc/socket.cc:50 NCCL WARN socketProgress: Connection closed by remote peer gpu-node1.int.hpcie.labs.faculty.ie.edu<45074>
-gpu-node2:2985003:2985024 [0] NCCL INFO misc/socket.cc:752 -> 6
-gpu-node2:2985003:2985024 [0] NCCL INFO transport/net_socket.cc:474 -> 6
-gpu-node2:2985003:2985024 [0] NCCL INFO transport/net.cc:1298 -> 6
-gpu-node2:2985003:2985024 [0] NCCL INFO proxy.cc:694 -> 6
-gpu-node2:2985003:2985024 [0] NCCL INFO proxy.cc:874 -> 6 [Progress Thread]
-gpu-node2:2985003:2985022 [0] NCCL INFO [Service thread] Connection closed by localRank 0
-gpu-node2:2985003:2985016 [0] NCCL INFO comm 0x8e01d00 rank 1 nranks 2 cudaDev 0 busId 100000 - Abort COMPLETE
-[rank1]:[E ProcessGroupNCCL.cpp:577] [Rank 1] Some NCCL operations have failed or timed out. Due to the asynchronous nature of CUDA kernels, subsequent GPU operations might run on corrupted/incomplete data.
-[rank1]:[E ProcessGroupNCCL.cpp:583] [Rank 1] To avoid data inconsistency, we are taking the entire process down.
-[rank1]:[E ProcessGroupNCCL.cpp:1414] [PG 0 Rank 1] Process group watchdog thread terminated with exception: NCCL error: remote process exited or there was a network error, NCCL version 2.20.5
-ncclRemoteError: A call failed possibly due to a network error or a remote process exiting prematurely.
-Last error:
-socketProgress: Connection closed by remote peer gpu-node1.int.hpcie.labs.faculty.ie.edu<45074>
-Exception raised from checkForNCCLErrorsInternal at /opt/conda/conda-bld/pytorch_1716905971132/work/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp:1723 (most recent call first):
-frame #0: c10::Error::Error(c10::SourceLocation, std::string) + 0x57 (0x14790e6d6897 in /opt/conda/lib/python3.10/site-packages/torch/lib/libc10.so)
-frame #1: c10d::ProcessGroupNCCL::checkForNCCLErrorsInternal(std::shared_ptr<c10d::NCCLComm>&) + 0x220 (0x1478add786a0 in /opt/conda/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
-frame #2: c10d::ProcessGroupNCCL::WorkNCCL::checkAndSetException() + 0x7c (0x1478add788ec in /opt/conda/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
-frame #3: c10d::ProcessGroupNCCL::watchdogHandler() + 0x180 (0x1478add7db10 in /opt/conda/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
-frame #4: c10d::ProcessGroupNCCL::ncclCommWatchdog() + 0x10c (0x1478add7ee7c in /opt/conda/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
-frame #5: <unknown function> + 0xdbbf4 (0x14790e2c7bf4 in /opt/conda/lib/python3.10/site-packages/torch/lib/../../../.././libstdc++.so.6)
-frame #6: <unknown function> + 0x94ac3 (0x147916838ac3 in /lib/x86_64-linux-gnu/libc.so.6)
-frame #7: <unknown function> + 0x126850 (0x1479168ca850 in /lib/x86_64-linux-gnu/libc.so.6)
+A final and more consequential limitation concerned model loading and execution on the cluster's single-GPU nodes. Even after resolving NVIDIA driver binding issues, the system was unable to load the model weights into device memory in a usable configuration. Initial attempts to place all layers of the 7B model on each GPU consistently triggered out-of-memory terminations, as reflected in the following Slurm output:
+Some of the step tasks have been OOM Killed. srun: error: gpu-node1: task 0: Out Of Memory
+To mitigate this, the model was partitioned such that the first half of the transformer layers were assigned to the first GPU node and the second half to the second node. However, this configuration failed at model construction time: the pretrained weights could not be mapped reliably to their assigned devices, and the loader reported unmapped parameters, for example:
+ValueError: model.layers.0.self_attn.q_proj.weight doesn't have any device set.
+ and, on the other rank:
+ ValueError: model.embed_tokens.weight doesn't have any device set.
+Even after downgrading to a smaller 3B model, the same failures occurred, indicating that the underlying issue was not model size but the incompatibility between multi-node device placement and the Hugging Face from_pretrained loading path within this constrained environment. To resolve this, the `partition_model()` function was redesigned to construct a complete `device_map` dictionary that explicitly assigns every model component—including embedding layers, transformer blocks, layer norms, and the language model head—to either the local GPU (`device.type`) or a per-rank `offload_folder` on disk. This approach ensures that `from_pretrained` receives a fully specified device mapping, preventing the "no device set" errors. The function then extracts only the relevant submodules into a lightweight `nn.Module` container for each pipeline stage: stage 0 receives the embedding layer and the first half of transformer layers, while stage 1 receives the remaining layers, the final layer norm, and a cloned `lm_head`. Hidden states are streamed between stages using `torch.distributed.send` and `recv` operations during autoregressive generation. With these changes, the distributed pipeline successfully constructs and executes across the two-node cluster configuration.
